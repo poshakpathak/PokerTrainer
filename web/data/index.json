@@ -1,0 +1,79 @@
+{
+ "spots": [
+  {
+   "id": "bb_vs_btn_3bp",
+   "name": "BB vs BTN, 3-bet pot",
+   "description": "BTN opens 2.5bb, BB 3-bets to 11bb, BTN calls. 100bb deep, no rake.",
+   "oop": "BB",
+   "ip": "BTN",
+   "pot_bb": 22.5,
+   "stack_bb": 89,
+   "ranges": {
+    "oop": "TT+,AJs+,AQo+,A5s-A2s,KTs,K6s-K5s,QJs:0.5,J9s,T8s,97s,86s,75s,64s,KJo:0.5",
+    "ip": "JJ-44,AQs-A2s,AQo-AJo,KQs-K9s,KQo,QJs-Q9s,JTs-J9s,T9s-T8s,98s-97s,87s-86s,76s,65s,54s"
+   },
+   "flops": [
+    {
+     "flop": "6s4d2h",
+     "exploitability_pct": 0.913
+    },
+    {
+     "flop": "8c7c5d",
+     "exploitability_pct": 0.948
+    },
+    {
+     "flop": "AhKc5d",
+     "exploitability_pct": 0.854
+    },
+    {
+     "flop": "As7d2c",
+     "exploitability_pct": 0.954
+    },
+    {
+     "flop": "Jd8c3s",
+     "exploitability_pct": 0.746
+    },
+    {
+     "flop": "Ks7d2c",
+     "exploitability_pct": 0.715
+    },
+    {
+     "flop": "Qh9c4d",
+     "exploitability_pct": 0.752
+    },
+    {
+     "flop": "Td9d6h",
+     "exploitability_pct": 0.958
+    }
+   ]
+  },
+  {
+   "id": "btn_vs_bb_srp",
+   "name": "BTN vs BB, single-raised pot",
+   "description": "BTN opens 2.5bb, BB calls. 100bb deep, no rake.",
+   "oop": "BB",
+   "ip": "BTN",
+   "pot_bb": 5.5,
+   "stack_bb": 97.5,
+   "ranges": {
+    "oop": "99-22,ATs-A6s,KQs,KJs,K9s-K2s,QTs-Q2s,QJs:0.5,JTs,J8s-J4s,T9s,T7s-T6s,98s,96s,87s,85s,76s,74s,65s,63s,54s,53s,43s,AJo-A2o,KQo,KTo-K7o,KJo:0.5,QJo,QTo,Q9o,JTo,J9o,J8o,T9o,T8o,98o,87o,76o",
+    "ip": "22+,A2s+,K2s+,Q2s+,J4s+,T6s+,96s+,85s+,74s+,64s+,53s+,43s,A2o+,K8o+,Q9o+,J9o+,T8o+,98o"
+   },
+   "flops": []
+  },
+  {
+   "id": "co_vs_bb_srp",
+   "name": "CO vs BB, single-raised pot",
+   "description": "CO opens 2.5bb, BB calls. 100bb deep, no rake.",
+   "oop": "BB",
+   "ip": "CO",
+   "pot_bb": 5.5,
+   "stack_bb": 97.5,
+   "ranges": {
+    "oop": "TT-22,AJs-A6s,A3s-A2s,KJs-K5s,QJs,QTs-Q6s,JTs-J7s,T9s-T7s,98s-96s,87s-85s,76s-75s,65s-64s,54s,53s,43s,AJo-A9o,KQo-KTo,QJo,QTo,JTo",
+    "ip": "22+,A2s+,K5s+,Q8s+,J8s+,T8s+,97s+,86s+,75s+,65s,54s,ATo+,KJo+,QJo"
+   },
+   "flops": []
+  }
+ ]
+}
