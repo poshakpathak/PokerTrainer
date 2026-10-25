@@ -1,10 +1,14 @@
 import { initStudy, openInStudy } from "./study.js";
 import { initTrainer } from "./trainer.js";
 import { initRanges } from "./ranges.js";
+import { initReports } from "./reports.js";
+import { initPreflop } from "./preflop.js";
 
 const views = {
   study: document.getElementById("view-study"),
   trainer: document.getElementById("view-trainer"),
+  preflop: document.getElementById("view-preflop"),
+  reports: document.getElementById("view-reports"),
   ranges: document.getElementById("view-ranges"),
 };
 const started = {};
@@ -23,15 +27,17 @@ function show(name) {
   return started[name];
 }
 
+async function openStudy(spot, flop, path, cls) {
+  await show("study");
+  await openInStudy(views.study, spot, flop, path, cls);
+}
+
 function start(name) {
   if (name === "study") return initStudy(views.study);
   if (name === "ranges") return initRanges(views.ranges);
-  return initTrainer(views.trainer, {
-    onOpenStudy: async (spot, flop, path, cls) => {
-      await show("study");
-      await openInStudy(views.study, spot, flop, path, cls);
-    },
-  });
+  if (name === "preflop") return initPreflop(views.preflop);
+  if (name === "reports") return initReports(views.reports, { onOpenStudy: openStudy });
+  return initTrainer(views.trainer, { onOpenStudy: openStudy });
 }
 
 document.querySelectorAll("header nav button").forEach((b) => (b.onclick = () => show(b.dataset.view)));
