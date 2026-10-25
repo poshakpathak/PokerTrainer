@@ -1,0 +1,30 @@
+{
+  "id": "bb_vs_btn_3bp",
+  "name": "BB vs BTN, 3-bet pot",
+  "description": "BTN opens 2.5bb, BB 3-bets to 11bb, BTN calls. 100bb deep, no rake.",
+  "oop": "BB",
+  "ip": "BTN",
+  "pot_bb": 22.5,
+  "stack_bb": 89,
+  "ranges": {
+    "oop": "TT+,AJs+,AQo+,A5s-A2s,KTs,K6s-K5s,QJs:0.5,J9s,T8s,97s,86s,75s,64s,KJo:0.5",
+    "ip": "JJ-44,AQs-A2s,AQo-AJo,KQs-K9s,KQo,QJs-Q9s,JTs-J9s,T9s-T8s,98s-97s,87s-86s,76s,65s,54s"
+  },
+  "bets": {
+    "flop": {
+      "oop": "33%, 66%",
+      "ip": "33%, 66%",
+      "raise": "3x"
+    },
+    "turn": {
+      "oop": "66%",
+      "ip": "66%",
+      "raise": ""
+    },
+    "river": {
+      "oop": "75%",
+      "ip": "75%",
+      "raise": ""
+    }
+  }
+}

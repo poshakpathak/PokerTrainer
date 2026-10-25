@@ -1,0 +1,20 @@
+# One flop per line. Lines starting with # are comments.
+# A small spread of textures to start with: dry, wet, paired, monotone, high, low.
+As7d2c
+Ks7d2c
+Qh9c4d
+Jd8c3s
+Td9d6h
+8c7c5d
+6s4d2h
+AhKc5d
+KhQdTs
+7h7c2d
+KdKc4s
+Ah8h3h
+9s6s3s
+Qc8h5h
+Js9s2d
+AdTc4h
+5c4h3d
+TcTd7h

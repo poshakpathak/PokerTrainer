@@ -1,0 +1,30 @@
+{
+  "id": "co_vs_bb_srp",
+  "name": "CO vs BB, single-raised pot",
+  "description": "CO opens 2.5bb, BB calls. 100bb deep, no rake.",
+  "oop": "BB",
+  "ip": "CO",
+  "pot_bb": 5.5,
+  "stack_bb": 97.5,
+  "ranges": {
+    "oop": "TT-22,AJs-A6s,A3s-A2s,KJs-K5s,QJs,QTs-Q6s,JTs-J7s,T9s-T7s,98s-96s,87s-85s,76s-75s,65s-64s,54s,53s,43s,AJo-A9o,KQo-KTo,QJo,QTo,JTo",
+    "ip": "22+,A2s+,K5s+,Q8s+,J8s+,T8s+,97s+,86s+,75s+,65s,54s,ATo+,KJo+,QJo"
+  },
+  "bets": {
+    "flop": {
+      "oop": "33%, 75%",
+      "ip": "33%, 75%",
+      "raise": "3x"
+    },
+    "turn": {
+      "oop": "66%",
+      "ip": "66%",
+      "raise": ""
+    },
+    "river": {
+      "oop": "75%",
+      "ip": "75%",
+      "raise": ""
+    }
+  }
+}

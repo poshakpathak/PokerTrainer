@@ -1,0 +1,30 @@
+{
+  "id": "btn_vs_bb_srp",
+  "name": "BTN vs BB, single-raised pot",
+  "description": "BTN opens 2.5bb, BB calls. 100bb deep, no rake.",
+  "oop": "BB",
+  "ip": "BTN",
+  "pot_bb": 5.5,
+  "stack_bb": 97.5,
+  "ranges": {
+    "oop": "99-22,ATs-A6s,KQs,KJs,K9s-K2s,QTs-Q2s,QJs:0.5,JTs,J8s-J4s,T9s,T7s-T6s,98s,96s,87s,85s,76s,74s,65s,63s,54s,53s,43s,AJo-A2o,KQo,KTo-K7o,KJo:0.5,QJo,QTo,Q9o,JTo,J9o,J8o,T9o,T8o,98o,87o,76o",
+    "ip": "22+,A2s+,K2s+,Q2s+,J4s+,T6s+,96s+,85s+,74s+,64s+,53s+,43s,A2o+,K8o+,Q9o+,J9o+,T8o+,98o"
+  },
+  "bets": {
+    "flop": {
+      "oop": "33%, 75%",
+      "ip": "33%, 75%",
+      "raise": "3x"
+    },
+    "turn": {
+      "oop": "66%",
+      "ip": "66%",
+      "raise": ""
+    },
+    "river": {
+      "oop": "75%",
+      "ip": "75%",
+      "raise": ""
+    }
+  }
+}
