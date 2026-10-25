@@ -5,9 +5,10 @@ import { cardsHtml } from "./cards.js";
 import { loadIndex, loadSolution, nodeHands, actionText, actionColor } from "./data.js";
 
 const STORE_KEY = "pokertrainer.stats.v1";
-const DEFAULT_STATS = { hands: 0, correct: 0, evLossBb: 0, evLossPotPct: 0, history: [] };
+const DEFAULT_STATS = { hands: 0, correct: 0, evLossBb: 0, evLossPotPct: 0, history: [], mistakes: [] };
+const MAX_MISTAKES = 200;
 
-const settings = { spots: null, seat: "both", depth: "first" };
+const settings = { spots: null, seat: "both", depth: "first", mode: "new" };
 let stats = loadStats();
 let current = null;
 
@@ -36,6 +37,10 @@ export async function initTrainer(root, { onOpenStudy }) {
     <div class="trainer">
       <aside class="panel controls">
         <h3>Drill settings</h3>
+        <div class="tabs" id="tr-mode">
+          <button data-mode="new">New hands</button>
+          <button data-mode="review">Review mistakes <span id="tr-mcount"></span></button>
+        </div>
         <fieldset id="tr-spots"><legend>Spots</legend>
           ${spots.map((s) => `<label class="check"><input type="checkbox" value="${s.id}" ${settings.spots.has(s.id) ? "checked" : ""}> ${s.name}</label>`).join("")}
         </fieldset>
@@ -60,6 +65,17 @@ export async function initTrainer(root, { onOpenStudy }) {
       <aside class="panel detail" id="tr-history"></aside>
     </div>`;
 
+  const setMode = (mode) => {
+    settings.mode = mode;
+    root.querySelectorAll("#tr-mode button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+  };
+  setMode(settings.mode);
+  root.querySelector("#tr-mode").onclick = (e) => {
+    const mode = e.target.closest("button")?.dataset.mode;
+    if (!mode) return;
+    setMode(mode);
+    deal(root, index, onOpenStudy);
+  };
   root.querySelector("#tr-seat").value = settings.seat;
   root.querySelector("#tr-depth").value = settings.depth;
   root.querySelector("#tr-spots").onchange = (e) => {
@@ -69,7 +85,7 @@ export async function initTrainer(root, { onOpenStudy }) {
   root.querySelector("#tr-seat").onchange = (e) => { settings.seat = e.target.value; deal(root, index, onOpenStudy); };
   root.querySelector("#tr-depth").onchange = (e) => { settings.depth = e.target.value; deal(root, index, onOpenStudy); };
   root.querySelector("#tr-reset").onclick = () => {
-    stats = { ...DEFAULT_STATS, history: [] };
+    stats = { ...DEFAULT_STATS, history: [], mistakes: [] };
     saveStats();
     renderStats(root);
   };
@@ -108,7 +124,36 @@ function nodeMatches(node) {
   return true;
 }
 
+async function dealMistake(root, index, onOpenStudy) {
+  const table = root.querySelector("#tr-table");
+  // Skip saved mistakes whose spot or flop is no longer in the library.
+  const known = stats.mistakes.filter((m) => index.spots.some((s) => s.id === m.spot && s.flops.some((f) => f.flop === m.flop)));
+  if (!known.length) {
+    table.innerHTML = `<p class="hint">No mistakes to review. Hands you get wrong in New hands mode are saved here until you answer them correctly.</p>`;
+    current = null;
+    return;
+  }
+  const m = pick(known);
+  const spot = index.spots.find((s) => s.id === m.spot);
+  const sol = await loadSolution(m.spot, m.flop);
+  const node = sol.byPath.get(m.path.join(" / "));
+  const hand = node && nodeHands(node).find((h) => h.combo === m.combo);
+  if (!hand) {
+    forgetMistake(m);
+    return dealMistake(root, index, onOpenStudy);
+  }
+  current = { spot, flop: m.flop, sol, node, hand, answered: false, review: true };
+  renderQuestion(root, index, onOpenStudy);
+}
+
+const sameHand = (a, b) => a.spot === b.spot && a.flop === b.flop && a.combo === b.combo && a.path.join("/") === b.path.join("/");
+
+function forgetMistake(m) {
+  stats.mistakes = stats.mistakes.filter((x) => !sameHand(x, m));
+}
+
 async function deal(root, index, onOpenStudy) {
+  if (settings.mode === "review") return dealMistake(root, index, onOpenStudy);
   const table = root.querySelector("#tr-table");
   const spots = index.spots.filter((s) => s.flops.length && settings.spots.has(s.id));
   if (!spots.length) {
@@ -153,7 +198,7 @@ function renderQuestion(root, index, onOpenStudy) {
   const villain = node.player === "oop" ? spot.ip : spot.oop;
   const table = root.querySelector("#tr-table");
   table.innerHTML = `
-    <p class="spotname">${spot.name}</p>
+    <p class="spotname">${current.review ? "Review · " : ""}${spot.name}</p>
     <div class="board">${cardsHtml(flop, "big")}</div>
     <p class="line">${lineText(spot, sol, node)}</p>
     <p class="pot">Pot <b>${node.pot_bb}bb</b>${node.to_call_bb ? ` · ${villain} bet, you face <b>${node.to_call_bb}bb</b>` : ""}</p>
@@ -193,6 +238,14 @@ function answer(root, index, onOpenStudy, choice) {
     chose: actionText(node.actions[choice]), lossBb: +lossBb.toFixed(2), grade: g.label, cls: g.cls,
   });
   stats.history = stats.history.slice(0, 30);
+  const key = { spot: spot.id, flop, path: node.path, combo: hand.combo };
+  if (current.review) {
+    if (g.cls === "good") forgetMistake(key);
+  } else if (g.cls !== "good") {
+    forgetMistake(key);
+    stats.mistakes.unshift(key);
+    stats.mistakes = stats.mistakes.slice(0, MAX_MISTAKES);
+  }
   saveStats();
 
   const buttons = root.querySelectorAll("#tr-table .answers button");
@@ -226,6 +279,8 @@ function answer(root, index, onOpenStudy, choice) {
 }
 
 function renderStats(root) {
+  const count = root.querySelector("#tr-mcount");
+  if (count) count.textContent = stats.mistakes.length ? `(${stats.mistakes.length})` : "";
   const avgPot = stats.hands ? stats.evLossPotPct / stats.hands : 0;
   const avgBb = stats.hands ? stats.evLossBb / stats.hands : 0;
   root.querySelector("#tr-stats").innerHTML = `

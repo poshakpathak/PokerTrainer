@@ -42,6 +42,35 @@ def load_spots(ids):
     return spots
 
 
+REPORT_NODES = {"": "oop_first", "Check": "ip_vs_check"}
+
+
+def summarize(sol):
+    """Range-wide action frequencies at the first decisions, for the Reports view."""
+    report = {}
+    for node in sol["nodes"]:
+        key = REPORT_NODES.get(" / ".join(node["path"]))
+        if key is None:
+            continue
+        n = len(node["actions"])
+        freq = [0.0] * n
+        total = 0.0
+        for row in node["hands"]:
+            if not row:
+                continue
+            reach = row[0]
+            total += reach
+            for a in range(n):
+                freq[a] += row[1 + a] * reach
+        report[key] = {
+            "actions": node["actions"],
+            "freq": [round(f / total, 4) if total else 0 for f in freq],
+            "equity": node.get("equity"),
+            "ev_bb": node.get("ev_bb"),
+        }
+    return report
+
+
 def write_index():
     spots = []
     for f in sorted(SPOTS_DIR.glob("*.json")):
@@ -51,7 +80,11 @@ def write_index():
         if solved_dir.is_dir():
             for sol in sorted(solved_dir.glob("*.json")):
                 meta = json.loads(sol.read_text())
-                flops.append({"flop": meta["flop"], "exploitability_pct": meta["exploitability_pct"]})
+                flops.append({
+                    "flop": meta["flop"],
+                    "exploitability_pct": meta["exploitability_pct"],
+                    "report": summarize(meta),
+                })
         spots.append({
             "id": spot["id"],
             "name": spot["name"],
