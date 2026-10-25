@@ -14,8 +14,16 @@
    },
    "flops": [
     {
+     "flop": "6s4d2h",
+     "exploitability_pct": 0.913
+    },
+    {
      "flop": "8c7c5d",
      "exploitability_pct": 0.948
+    },
+    {
+     "flop": "AhKc5d",
+     "exploitability_pct": 0.854
     },
     {
      "flop": "As7d2c",
