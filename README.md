@@ -24,9 +24,26 @@ It has three parts:
    - **Reports** compares one decision (e.g. the c-bet after a check) across every solved flop,
      sortable by action frequency and filterable by texture, so you can learn the patterns
      instead of memorizing single boards.
+   - **Solver** solves any spot you set up (ranges, board, pot, stacks, bet sizes, rake) on your
+     own machine and lets you browse the whole tree: flop, turn and river, on any turn or river
+     card, with a report of the strategy on every card. Needs the local server below.
    - **Ranges** shows the preflop ranges each spot was solved with.
 
 ## Run it
+
+With the solver server (everything, including the Solver tab):
+
+```sh
+cd solver
+cargo run --release --bin pt-server
+# open http://127.0.0.1:8080
+```
+
+Options: `--port 8080`, `--threads N`, `--max-memory-gb 8` (solves whose tree needs more memory
+than this are refused instead of swapping your machine to death), `--web <path to web/>`.
+The server only listens on 127.0.0.1.
+
+Without Rust, everything except the Solver tab works from any static file server:
 
 ```sh
 cd web
@@ -83,10 +100,32 @@ representative per texture.
   tighter solutions at the cost of time.
 - The trees are simplified (few bet sizes, no turn/river raises) so they solve on a laptop.
   Treat the output as a solid baseline, not the final word in every spot.
-- Only flop decisions are exported. Turn and river are solved (they're needed for correct flop
-  strategy) but not shown yet.
+- The precomputed library only exports flop decisions. Use the Solver tab to explore turns
+  and rivers.
 - The preflop ranges (both the spot ranges and the opening charts) are hand-written
   approximations of 100bb 6-max ranges, not solver output.
+
+## Solver API
+
+`pt-server` exposes a small JSON API the Solver tab uses; you can script against it too.
+
+| Request | Body | Returns |
+| --- | --- | --- |
+| `POST /api/solve` | `{spot, board, accuracy, max_iters}`; `spot` has the same shape as `spots/*.json` | starts a solve (replacing any current one) |
+| `GET /api/status` | | state, iteration, exploitability, time, memory |
+| `POST /api/stop` | | stops early and keeps the current strategy |
+| `POST /api/node` | `{history: [...]}` | the node after `history`: a decision (strategy, EV and equity per combo), a chance node (a summary for every card that can come), or terminal |
+
+`history` lists action indexes at decision nodes and card ids (0 to 51, `4 * rank + suit` with
+2 = 0 and clubs, diamonds, hearts, spades = 0 to 3) at chance nodes.
+
+## Roadmap
+
+- Preflop solver, so the ranges going into each spot come from a solve instead of charts.
+- Node locking: set a strategy for one player (e.g. "never bluffs the river") and re-solve to
+  see the best exploit.
+- Aggregated turn and river reports across many flops.
+- Multiway pots.
 
 ## License
 
