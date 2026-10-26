@@ -98,6 +98,8 @@ export function nodeHands(node) {
       reach: row[0],
       strat: row.slice(1, 1 + n),
       ev: row.slice(1 + n, 1 + 2 * n),
+      // Equity was added to the export later; older files don't have it.
+      eq: row.length > 1 + 2 * n ? row[1 + 2 * n] : null,
     });
   });
   return out;
@@ -120,11 +122,13 @@ export function classSummary(hands, nActions) {
   for (const h of hands) {
     let c = map.get(h.cls);
     if (!c) {
-      c = { cls: h.cls, reach: 0, possible: 0, freq: new Array(nActions).fill(0), ev: new Array(nActions).fill(0), hands: [] };
+      c = { cls: h.cls, reach: 0, freq: new Array(nActions).fill(0), ev: new Array(nActions).fill(0), value: 0, eq: 0, hands: [] };
       map.set(h.cls, c);
     }
     c.reach += h.reach;
     c.hands.push(h);
+    c.value += handValue(h) * h.reach;
+    c.eq += (h.eq ?? 0) * h.reach;
     h.strat.forEach((s, a) => {
       c.freq[a] += s * h.reach;
       c.ev[a] += h.ev[a] * h.reach;
@@ -134,7 +138,15 @@ export function classSummary(hands, nActions) {
     if (c.reach > 0) {
       c.freq = c.freq.map((f) => f / c.reach);
       c.ev = c.ev.map((e) => e / c.reach);
+      c.value /= c.reach;
+      c.eq /= c.reach;
     }
+    c.hasEq = c.hands.every((h) => h.eq !== null);
   }
   return map;
+}
+
+/** EV of a hand playing the solver strategy at this node. */
+export function handValue(h) {
+  return h.strat.reduce((sum, s, a) => sum + s * h.ev[a], 0);
 }

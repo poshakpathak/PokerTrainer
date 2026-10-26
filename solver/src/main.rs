@@ -178,8 +178,18 @@ fn export_nodes(
     let ev = game.expected_values_detail(player);
     let reach = game.weights(player).to_vec();
     let combos = game.normalized_weights(player).to_vec();
+    let equity = game.equity(player);
 
-    // Per hand: [reach, s_0..s_n, ev_0..ev_n]; null when the hand never reaches this node.
+    // Range-wide equity and EV for both players, weighted by combos reaching this node.
+    let mut range_eq = [0.0; 2];
+    let mut range_ev = [0.0; 2];
+    for p in 0..2 {
+        let w = game.normalized_weights(p);
+        range_eq[p] = round(compute_average(&game.equity(p), w) as f64, 4);
+        range_ev[p] = round(compute_average(&game.expected_values(p), w) as f64 / CHIPS_PER_BB, 2);
+    }
+
+    // Per hand: [reach, s_0..s_n, ev_0..ev_n, equity]; null when the hand never reaches this node.
     let mut hands = Vec::with_capacity(n_hands);
     for h in 0..n_hands {
         if combos[h] <= 0.0 || reach[h] <= 1e-4 {
@@ -194,6 +204,7 @@ fn export_nodes(
         for a in 0..n_actions {
             row.push(json!(round(ev[a * n_hands + h] as f64 / CHIPS_PER_BB, 2)));
         }
+        row.push(json!(round(equity[h] as f64, 3)));
         hands.push(Value::Array(row));
     }
 
@@ -203,6 +214,8 @@ fn export_nodes(
         "pot_bb": bb(pot),
         "to_call_bb": bb((street_bets[player ^ 1] - street_bets[player]).max(0)),
         "actions": actions_json,
+        "equity": range_eq,
+        "ev_bb": range_ev,
         "hands": hands,
     }));
 

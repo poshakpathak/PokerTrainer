@@ -11,11 +11,19 @@ It has three parts:
    definitions (preflop ranges, pot, stacks, bet sizes) and a script that batch-solves spots ×
    flops into `web/data/`.
 3. **Web app** (`web/`): a static site with no build step.
-   - **Trainer** deals you a random hand in a solved spot, you pick an action, and it scores
-     you by EV lost against the solver. Stats and recent hands are kept in your browser.
-   - **Study** is a strategy browser: the 13×13 grid shows each hand class's action mix,
-     you can step through the action tree, and hovering a cell shows every combo's
-     frequencies and EVs.
+   - **Postflop trainer** deals you a random hand in a solved spot, you pick an action, and it
+     scores you by EV lost against the solver. Hands you get wrong are saved, and
+     **Review mistakes** mode replays them until you answer them correctly. Stats are kept in
+     your browser.
+   - **Preflop** drills open-or-fold decisions from every seat against the opening charts in
+     `web/data/preflop.json`, focusing on hands near the edge of each range.
+   - **Study** is a strategy browser: the 13×13 grid shows each hand class's action mix (or
+     its EV or equity), you can step through the action tree, and hovering a cell shows every
+     combo's frequencies, EVs and equity. Each node also shows both ranges' equity, EV and
+     equity realization.
+   - **Reports** compares one decision (e.g. the c-bet after a check) across every solved flop,
+     sortable by action frequency and filterable by texture, so you can learn the patterns
+     instead of memorizing single boards.
    - **Ranges** shows the preflop ranges each spot was solved with.
 
 ## Run it
@@ -77,7 +85,8 @@ representative per texture.
   Treat the output as a solid baseline, not the final word in every spot.
 - Only flop decisions are exported. Turn and river are solved (they're needed for correct flop
   strategy) but not shown yet.
-- The preflop ranges are hand-written approximations of 100bb 6-max ranges, not solver output.
+- The preflop ranges (both the spot ranges and the opening charts) are hand-written
+  approximations of 100bb 6-max ranges, not solver output.
 
 ## License
 
