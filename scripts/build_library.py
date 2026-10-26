@@ -94,6 +94,8 @@ def write_index():
             "pot_bb": spot["pot_bb"],
             "stack_bb": spot["stack_bb"],
             "ranges": spot["ranges"],
+            "bets": spot["bets"],
+            "rake": spot.get("rake", {"rate": 0, "cap_bb": 0}),
             "flops": flops,
         })
     DATA_DIR.mkdir(parents=True, exist_ok=True)

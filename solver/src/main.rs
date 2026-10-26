@@ -6,53 +6,9 @@
 //!             [--iters 300] [--accuracy 0.5] [--threads N]
 
 use postflop_solver::*;
-use serde::Deserialize;
+use pt_solver::*;
 use serde_json::{json, Value};
 use std::time::Instant;
-
-/// Chip units per big blind. The solver works in integers, so we use 1/20 bb.
-const CHIPS_PER_BB: f64 = 20.0;
-
-#[derive(Deserialize)]
-struct StreetBets {
-    oop: String,
-    ip: String,
-    raise: String,
-    #[serde(default)]
-    donk: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct Bets {
-    flop: StreetBets,
-    turn: StreetBets,
-    river: StreetBets,
-}
-
-#[derive(Deserialize)]
-struct Ranges {
-    oop: String,
-    ip: String,
-}
-
-#[derive(Deserialize, Default)]
-struct Rake {
-    #[serde(default)]
-    rate: f64,
-    #[serde(default)]
-    cap_bb: f64,
-}
-
-#[derive(Deserialize)]
-struct Spot {
-    id: String,
-    pot_bb: f64,
-    stack_bb: f64,
-    ranges: Ranges,
-    bets: Bets,
-    #[serde(default)]
-    rake: Rake,
-}
 
 struct Args {
     spot: String,
@@ -93,63 +49,6 @@ fn parse_args() -> Result<Args, String> {
     })
 }
 
-fn bet_sizes(s: &StreetBets) -> Result<[BetSizeOptions; 2], String> {
-    Ok([
-        BetSizeOptions::try_from((s.oop.as_str(), s.raise.as_str()))?,
-        BetSizeOptions::try_from((s.ip.as_str(), s.raise.as_str()))?,
-    ])
-}
-
-fn donk_sizes(s: &StreetBets) -> Result<Option<DonkSizeOptions>, String> {
-    s.donk
-        .as_deref()
-        .map(DonkSizeOptions::try_from)
-        .transpose()
-}
-
-fn bb(chips: i32) -> f64 {
-    round(chips as f64 / CHIPS_PER_BB, 2)
-}
-
-fn round(x: f64, digits: i32) -> f64 {
-    let m = 10f64.powi(digits);
-    (x * m).round() / m
-}
-
-/// Describes an action as JSON, with sizes in bb and as a fraction of the pot before the action.
-fn action_json(action: &Action, pot_chips: i32, street_bets: [i32; 2], player: usize) -> Value {
-    let to_call = (street_bets[player ^ 1] - street_bets[player]).max(0);
-    let sized = |kind: &str, to: i32| {
-        // `to` is the player's total commitment on this street; the extra chips put in
-        // beyond calling, relative to the pot after calling, is the conventional "% pot".
-        let added = to - street_bets[player];
-        let pot_after_call = pot_chips + to_call;
-        let pct = ((added - to_call) as f64 / pot_after_call as f64 * 100.0).round() as i64;
-        json!({ "type": kind, "to_bb": bb(to), "add_bb": bb(added), "pct": pct })
-    };
-    match *action {
-        Action::Fold => json!({ "type": "fold" }),
-        Action::Check => json!({ "type": "check" }),
-        Action::Call => json!({ "type": "call", "add_bb": bb(to_call) }),
-        Action::Bet(to) => sized("bet", to),
-        Action::Raise(to) => sized("raise", to),
-        Action::AllIn(to) => sized("allin", to),
-        _ => json!({ "type": "other" }),
-    }
-}
-
-fn action_label(v: &Value) -> String {
-    match v["type"].as_str().unwrap_or("") {
-        "fold" => "Fold".into(),
-        "check" => "Check".into(),
-        "call" => "Call".into(),
-        "bet" => format!("Bet {}%", v["pct"]),
-        "raise" => format!("Raise {}bb", v["to_bb"]),
-        "allin" => "All-in".into(),
-        _ => "?".into(),
-    }
-}
-
 /// Walks every decision node on the flop (stops at the turn card or a terminal node).
 fn export_nodes(
     game: &mut PostFlopGame,
@@ -161,63 +60,10 @@ fn export_nodes(
     if game.is_terminal_node() || game.is_chance_node() {
         return;
     }
-    game.cache_normalized_weights();
-
-    let player = game.current_player();
-    let street_bets = game.total_bet_amount();
-    let pot = starting_pot + street_bets[0] + street_bets[1];
-    let actions = game.available_actions();
-    let actions_json: Vec<Value> = actions
-        .iter()
-        .map(|a| action_json(a, pot, street_bets, player))
-        .collect();
-
-    let n_hands = game.private_cards(player).len();
-    let n_actions = actions.len();
-    let strategy = game.strategy();
-    let ev = game.expected_values_detail(player);
-    let reach = game.weights(player).to_vec();
-    let combos = game.normalized_weights(player).to_vec();
-    let equity = game.equity(player);
-
-    // Range-wide equity and EV for both players, weighted by combos reaching this node.
-    let mut range_eq = [0.0; 2];
-    let mut range_ev = [0.0; 2];
-    for p in 0..2 {
-        let w = game.normalized_weights(p);
-        range_eq[p] = round(compute_average(&game.equity(p), w) as f64, 4);
-        range_ev[p] = round(compute_average(&game.expected_values(p), w) as f64 / CHIPS_PER_BB, 2);
-    }
-
-    // Per hand: [reach, s_0..s_n, ev_0..ev_n, equity]; null when the hand never reaches this node.
-    let mut hands = Vec::with_capacity(n_hands);
-    for h in 0..n_hands {
-        if combos[h] <= 0.0 || reach[h] <= 1e-4 {
-            hands.push(Value::Null);
-            continue;
-        }
-        let mut row = Vec::with_capacity(1 + 2 * n_actions);
-        row.push(json!(round(reach[h] as f64, 3)));
-        for a in 0..n_actions {
-            row.push(json!(round(strategy[a * n_hands + h] as f64, 3)));
-        }
-        for a in 0..n_actions {
-            row.push(json!(round(ev[a * n_hands + h] as f64 / CHIPS_PER_BB, 2)));
-        }
-        row.push(json!(round(equity[h] as f64, 3)));
-        hands.push(Value::Array(row));
-    }
-
-    nodes.push(json!({
-        "path": path.clone(),
-        "player": if player == 0 { "oop" } else { "ip" },
-        "pot_bb": bb(pot),
-        "to_call_bb": bb((street_bets[player ^ 1] - street_bets[player]).max(0)),
-        "actions": actions_json,
-        "equity": range_eq,
-        "ev_bb": range_ev,
-        "hands": hands,
-    }));
+    let mut node = decision_node_json(game, starting_pot);
+    node["path"] = json!(path.clone());
+    let actions_json = node["actions"].as_array().cloned().unwrap_or_default();
+    nodes.push(node);
 
     for (i, a) in actions_json.iter().enumerate() {
         path.push(action_label(a));
@@ -244,32 +90,7 @@ fn run() -> Result<(), String> {
     )
     .map_err(|e| format!("{}: {e}", args.spot))?;
 
-    let card_config = CardConfig {
-        range: [spot.ranges.oop.parse()?, spot.ranges.ip.parse()?],
-        flop: flop_from_str(&args.flop)?,
-        turn: NOT_DEALT,
-        river: NOT_DEALT,
-    };
-
-    let starting_pot = (spot.pot_bb * CHIPS_PER_BB).round() as i32;
-    let tree_config = TreeConfig {
-        initial_state: BoardState::Flop,
-        starting_pot,
-        effective_stack: (spot.stack_bb * CHIPS_PER_BB).round() as i32,
-        rake_rate: spot.rake.rate,
-        rake_cap: spot.rake.cap_bb * CHIPS_PER_BB,
-        flop_bet_sizes: bet_sizes(&spot.bets.flop)?,
-        turn_bet_sizes: bet_sizes(&spot.bets.turn)?,
-        river_bet_sizes: bet_sizes(&spot.bets.river)?,
-        turn_donk_sizes: donk_sizes(&spot.bets.turn)?,
-        river_donk_sizes: donk_sizes(&spot.bets.river)?,
-        add_allin_threshold: 1.5,
-        force_allin_threshold: 0.15,
-        merging_threshold: 0.1,
-    };
-
-    let action_tree = ActionTree::new(tree_config)?;
-    let mut game = PostFlopGame::with_config(card_config, action_tree)?;
+    let (mut game, starting_pot) = build_game(&spot, &args.flop)?;
     let (_, mem_compressed) = game.memory_usage();
     eprintln!(
         "[{} {}] memory {:.2} GB (compressed)",
