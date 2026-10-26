@@ -1,0 +1,11 @@
+{
+  "name": "6-max opening ranges, 100bb",
+  "note": "Hand-written approximations of solver opening ranges for a 2.5bb open (SB opens 3bb, raise or fold). CO and BTN match the ranges the postflop spots were solved with.",
+  "positions": [
+    { "id": "UTG", "range": "55+,A2s+,K8s+,Q9s+,J9s+,T9s,98s,87s,76s,ATo+,KJo+" },
+    { "id": "HJ", "range": "44+,A2s+,K6s+,Q8s+,J8s+,T8s+,97s+,87s,76s,65s,A9o+,KTo+,QTo+,JTo" },
+    { "id": "CO", "range": "22+,A2s+,K5s+,Q8s+,J8s+,T8s+,97s+,86s+,75s+,65s,54s,ATo+,KJo+,QJo" },
+    { "id": "BTN", "range": "22+,A2s+,K2s+,Q2s+,J4s+,T6s+,96s+,85s+,74s+,64s+,53s+,43s,A2o+,K8o+,Q9o+,J9o+,T8o+,98o" },
+    { "id": "SB", "range": "22+,A2s+,K2s+,Q4s+,J6s+,T6s+,96s+,85s+,75s+,64s+,54s,A2o+,K8o+,Q9o+,J9o+,T9o" }
+  ]
+}

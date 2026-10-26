@@ -4,7 +4,10 @@ import { cardsHtml } from "./cards.js";
 import { loadIndex, loadSolution, nodeHands, rangeFrequencies, classSummary, actionText, actionColor } from "./data.js";
 import { renderGrid, liveCombos } from "./grid.js";
 
-const state = { spot: null, flop: null, sol: null, node: null, focus: null, pinned: false };
+const state = { spot: null, flop: null, sol: null, node: null, focus: null, pinned: false, mode: "strategy" };
+
+// Red (low) to green (high) for the EV and equity heatmaps.
+const heat = (x) => `hsl(${Math.round(Math.max(0, Math.min(1, x)) * 130)} 60% 48%)`;
 
 export async function initStudy(root) {
   root.innerHTML = `
@@ -19,7 +22,15 @@ export async function initStudy(root) {
         <div id="st-freq" class="freqbar"></div>
         <div id="st-actions" class="actions"></div>
       </aside>
-      <section class="panel"><div id="st-grid"></div></section>
+      <section class="panel">
+        <div class="tabs" id="st-mode">
+          <button data-mode="strategy" class="active">Strategy</button>
+          <button data-mode="ev">EV</button>
+          <button data-mode="equity">Equity</button>
+        </div>
+        <div id="st-grid"></div>
+        <p id="st-range" class="meta"></p>
+      </section>
       <aside class="panel detail" id="st-detail"></aside>
     </div>`;
 
@@ -33,6 +44,13 @@ export async function initStudy(root) {
   spotSel.innerHTML = spots.map((s) => `<option value="${s.id}">${s.name}</option>`).join("");
   spotSel.onchange = () => selectSpot(root, index, spotSel.value);
   root.querySelector("#st-flop").onchange = (e) => selectFlop(root, e.target.value);
+  root.querySelector("#st-mode").onclick = (e) => {
+    const mode = e.target.dataset.mode;
+    if (!mode) return;
+    state.mode = mode;
+    root.querySelectorAll("#st-mode button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+    showNode(root, state.node);
+  };
   await selectSpot(root, index, spots[0].id);
 }
 
@@ -120,8 +138,16 @@ function showNode(root, node) {
       cell: (cls) => {
         const c = summary.get(cls);
         if (!c) return null;
+        const fill = c.reach / liveCombos(cls, state.flop);
+        if (state.mode === "ev") {
+          return { fill, segments: [{ color: heat(c.value / node.pot_bb), frac: 1 }], label: c.value.toFixed(1) };
+        }
+        if (state.mode === "equity") {
+          if (!c.hasEq) return { fill, segments: [], label: "n/a" };
+          return { fill, segments: [{ color: heat(c.eq), frac: 1 }], label: `${Math.round(c.eq * 100)}` };
+        }
         return {
-          fill: c.reach / liveCombos(cls, state.flop),
+          fill,
           segments: node.actions.map((a, i) => ({ color: actionColor(a, node.actions), frac: c.freq[i] })),
         };
       },
@@ -137,6 +163,19 @@ function showNode(root, node) {
     });
   draw();
   showDetail(root, node, state.focus ? summary.get(state.focus) : null, state.focus);
+
+  const rangeEl = root.querySelector("#st-range");
+  if (node.equity) {
+    const side = (p) => {
+      const eq = node.equity[p === "oop" ? 0 : 1];
+      const ev = node.ev_bb[p === "oop" ? 0 : 1];
+      const eqr = eq > 0 ? ev / (eq * node.pot_bb) : 0;
+      return `<b>${name(p)}</b> equity ${(eq * 100).toFixed(1)}%, EV ${ev.toFixed(2)}bb, EQR ${(eqr * 100).toFixed(0)}%`;
+    };
+    rangeEl.innerHTML = `${side("oop")} · ${side("ip")}. EQR (equity realization) is EV divided by the share of the pot your equity would win.`;
+  } else {
+    rangeEl.textContent = state.mode === "strategy" ? "" : "This flop was solved before equity was exported. Re-solve it with --force to see equity.";
+  }
 }
 
 function showDetail(root, node, c, cls) {
@@ -149,19 +188,19 @@ function showDetail(root, node, c, cls) {
     return;
   }
   const head = node.actions.map((a) => `<th><i style="background:${actionColor(a, node.actions)}"></i>${actionText(a)}</th>`).join("");
-  const row = (label, strat, ev, reach) => {
+  const row = (label, strat, ev, reach, eq) => {
     const best = Math.max(...ev);
     return `<tr><td>${label}${reach !== undefined ? `<small>${(reach * 100).toFixed(0)}%</small>` : ""}</td>${strat
       .map((s, i) => `<td class="${ev[i] === best ? "best" : ""}">${(s * 100).toFixed(0)}%<small>${ev[i].toFixed(2)}</small></td>`)
-      .join("")}</tr>`;
+      .join("")}<td>${eq == null ? "–" : `${(eq * 100).toFixed(0)}%`}</td></tr>`;
   };
   el.innerHTML = `
     <h3>${cls} <small>${c.reach.toFixed(2)} combos</small></h3>
     <table class="combos">
-      <thead><tr><th></th>${head}</tr></thead>
+      <thead><tr><th></th>${head}<th>Equity</th></tr></thead>
       <tbody>
-        ${row("All", c.freq, c.ev)}
-        ${c.hands.map((h) => row(cardsHtml(h.combo, "tiny"), h.strat, h.ev, h.reach)).join("")}
+        ${row("All", c.freq, c.ev, undefined, c.hasEq ? c.eq : null)}
+        ${c.hands.map((h) => row(cardsHtml(h.combo, "tiny"), h.strat, h.ev, h.reach, h.eq)).join("")}
       </tbody>
     </table>
     <p class="hint">Each cell shows frequency and EV in bb. The small % next to a combo is how often it gets to this spot.</p>`;
