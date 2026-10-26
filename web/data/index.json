@@ -12,6 +12,27 @@
     "oop": "TT+,AJs+,AQo+,A5s-A2s,KTs,K6s-K5s,QJs:0.5,J9s,T8s,97s,86s,75s,64s,KJo:0.5",
     "ip": "JJ-44,AQs-A2s,AQo-AJo,KQs-K9s,KQo,QJs-Q9s,JTs-J9s,T9s-T8s,98s-97s,87s-86s,76s,65s,54s"
    },
+   "bets": {
+    "flop": {
+     "oop": "33%, 66%",
+     "ip": "33%, 66%",
+     "raise": "3x"
+    },
+    "turn": {
+     "oop": "66%",
+     "ip": "66%",
+     "raise": ""
+    },
+    "river": {
+     "oop": "75%",
+     "ip": "75%",
+     "raise": ""
+    }
+   },
+   "rake": {
+    "rate": 0,
+    "cap_bb": 0
+   },
    "flops": [
     {
      "flop": "5c4h3d",
@@ -1287,6 +1308,27 @@
     "oop": "99-22,ATs-A6s,KQs,KJs,K9s-K2s,QTs-Q2s,QJs:0.5,JTs,J8s-J4s,T9s,T7s-T6s,98s,96s,87s,85s,76s,74s,65s,63s,54s,53s,43s,AJo-A2o,KQo,KTo-K7o,KJo:0.5,QJo,QTo,Q9o,JTo,J9o,J8o,T9o,T8o,98o,87o,76o",
     "ip": "22+,A2s+,K2s+,Q2s+,J4s+,T6s+,96s+,85s+,74s+,64s+,53s+,43s,A2o+,K8o+,Q9o+,J9o+,T8o+,98o"
    },
+   "bets": {
+    "flop": {
+     "oop": "33%, 75%",
+     "ip": "33%, 75%",
+     "raise": "3x"
+    },
+    "turn": {
+     "oop": "66%",
+     "ip": "66%",
+     "raise": ""
+    },
+    "river": {
+     "oop": "75%",
+     "ip": "75%",
+     "raise": ""
+    }
+   },
+   "rake": {
+    "rate": 0,
+    "cap_bb": 0
+   },
    "flops": [
     {
      "flop": "5c4h3d",
@@ -2561,6 +2603,27 @@
    "ranges": {
     "oop": "TT-22,AJs-A6s,A3s-A2s,KJs-K5s,QJs,QTs-Q6s,JTs-J7s,T9s-T7s,98s-96s,87s-85s,76s-75s,65s-64s,54s,53s,43s,AJo-A9o,KQo-KTo,QJo,QTo,JTo",
     "ip": "22+,A2s+,K5s+,Q8s+,J8s+,T8s+,97s+,86s+,75s+,65s,54s,ATo+,KJo+,QJo"
+   },
+   "bets": {
+    "flop": {
+     "oop": "33%, 75%",
+     "ip": "33%, 75%",
+     "raise": "3x"
+    },
+    "turn": {
+     "oop": "66%",
+     "ip": "66%",
+     "raise": ""
+    },
+    "river": {
+     "oop": "75%",
+     "ip": "75%",
+     "raise": ""
+    }
+   },
+   "rake": {
+    "rate": 0,
+    "cap_bb": 0
    },
    "flops": [
     {

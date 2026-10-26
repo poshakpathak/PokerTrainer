@@ -3,12 +3,14 @@ import { initTrainer } from "./trainer.js";
 import { initRanges } from "./ranges.js";
 import { initReports } from "./reports.js";
 import { initPreflop } from "./preflop.js";
+import { initSolver } from "./solver.js";
 
 const views = {
   study: document.getElementById("view-study"),
   trainer: document.getElementById("view-trainer"),
   preflop: document.getElementById("view-preflop"),
   reports: document.getElementById("view-reports"),
+  solver: document.getElementById("view-solver"),
   ranges: document.getElementById("view-ranges"),
 };
 const started = {};
@@ -36,6 +38,7 @@ function start(name) {
   if (name === "study") return initStudy(views.study);
   if (name === "ranges") return initRanges(views.ranges);
   if (name === "preflop") return initPreflop(views.preflop);
+  if (name === "solver") return initSolver(views.solver);
   if (name === "reports") return initReports(views.reports, { onOpenStudy: openStudy });
   return initTrainer(views.trainer, { onOpenStudy: openStudy });
 }
