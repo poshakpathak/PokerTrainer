@@ -1,13 +1,11 @@
 // Study view: browse a solved flop node by node, like a solver's strategy browser.
 
 import { cardsHtml } from "./cards.js";
-import { loadIndex, loadSolution, nodeHands, rangeFrequencies, classSummary, actionText, actionColor } from "./data.js";
-import { renderGrid, liveCombos } from "./grid.js";
+import { loadIndex, loadSolution, nodeHands, rangeFrequencies, actionText, actionColor } from "./data.js";
+import { renderNodeView, modeTabsHtml, wireModeTabs } from "./nodeview.js";
 
-const state = { spot: null, flop: null, sol: null, node: null, focus: null, pinned: false, mode: "strategy" };
-
-// Red (low) to green (high) for the EV and equity heatmaps.
-const heat = (x) => `hsl(${Math.round(Math.max(0, Math.min(1, x)) * 130)} 60% 48%)`;
+const state = { spot: null, flop: null, sol: null, node: null };
+const view = { mode: "strategy", focus: null, pinned: false };
 
 export async function initStudy(root) {
   root.innerHTML = `
@@ -23,11 +21,7 @@ export async function initStudy(root) {
         <div id="st-actions" class="actions"></div>
       </aside>
       <section class="panel">
-        <div class="tabs" id="st-mode">
-          <button data-mode="strategy" class="active">Strategy</button>
-          <button data-mode="ev">EV</button>
-          <button data-mode="equity">Equity</button>
-        </div>
+        ${modeTabsHtml("st-mode")}
         <div id="st-grid"></div>
         <p id="st-range" class="meta"></p>
       </section>
@@ -44,13 +38,7 @@ export async function initStudy(root) {
   spotSel.innerHTML = spots.map((s) => `<option value="${s.id}">${s.name}</option>`).join("");
   spotSel.onchange = () => selectSpot(root, index, spotSel.value);
   root.querySelector("#st-flop").onchange = (e) => selectFlop(root, e.target.value);
-  root.querySelector("#st-mode").onclick = (e) => {
-    const mode = e.target.dataset.mode;
-    if (!mode) return;
-    state.mode = mode;
-    root.querySelectorAll("#st-mode button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
-    showNode(root, state.node);
-  };
+  wireModeTabs(root.querySelector("#st-mode"), view, () => showNode(root, state.node));
   await selectSpot(root, index, spots[0].id);
 }
 
@@ -61,8 +49,8 @@ export async function openInStudy(root, spotId, flop, path, cls) {
   await selectSpot(root, index, spotId, flop);
   const node = state.sol.byPath.get(path.join(" / "));
   if (node) {
-    state.focus = cls || null;
-    state.pinned = !!cls;
+    view.focus = cls || null;
+    view.pinned = !!cls;
     showNode(root, node);
   }
 }
@@ -81,8 +69,8 @@ async function selectFlop(root, flop) {
   root.querySelector("#st-board").innerHTML = cardsHtml(flop, "big");
   root.querySelector("#st-meta").textContent =
     `${state.spot.description} Accuracy: ${state.sol.exploitability_pct}% of pot.`;
-  state.focus = null;
-  state.pinned = false;
+  view.focus = null;
+  view.pinned = false;
   showNode(root, state.sol.root);
 }
 
@@ -125,83 +113,16 @@ function showNode(root, node) {
   actionsEl.onclick = (e) => {
     const i = e.target.closest("button")?.dataset.i;
     if (i !== undefined && node.children[i]) {
-      state.focus = null;
-      state.pinned = false;
+      view.focus = null;
+      view.pinned = false;
       showNode(root, node.children[i]);
     }
   };
 
-  const summary = classSummary(hands, node.actions.length);
-  const draw = () =>
-    renderGrid(root.querySelector("#st-grid"), {
-      selected: state.pinned ? state.focus : null,
-      cell: (cls) => {
-        const c = summary.get(cls);
-        if (!c) return null;
-        const fill = c.reach / liveCombos(cls, state.flop);
-        if (state.mode === "ev") {
-          return { fill, segments: [{ color: heat(c.value / node.pot_bb), frac: 1 }], label: c.value.toFixed(1) };
-        }
-        if (state.mode === "equity") {
-          if (!c.hasEq) return { fill, segments: [], label: "n/a" };
-          return { fill, segments: [{ color: heat(c.eq), frac: 1 }], label: `${Math.round(c.eq * 100)}` };
-        }
-        return {
-          fill,
-          segments: node.actions.map((a, i) => ({ color: actionColor(a, node.actions), frac: c.freq[i] })),
-        };
-      },
-      onHover: (cls) => {
-        if (!state.pinned) showDetail(root, node, summary.get(cls), cls);
-      },
-      onClick: (cls) => {
-        state.pinned = !(state.pinned && state.focus === cls);
-        state.focus = cls;
-        showDetail(root, node, summary.get(cls), cls);
-        draw();
-      },
-    });
-  draw();
-  showDetail(root, node, state.focus ? summary.get(state.focus) : null, state.focus);
-
-  const rangeEl = root.querySelector("#st-range");
-  if (node.equity) {
-    const side = (p) => {
-      const eq = node.equity[p === "oop" ? 0 : 1];
-      const ev = node.ev_bb[p === "oop" ? 0 : 1];
-      const eqr = eq > 0 ? ev / (eq * node.pot_bb) : 0;
-      return `<b>${name(p)}</b> equity ${(eq * 100).toFixed(1)}%, EV ${ev.toFixed(2)}bb, EQR ${(eqr * 100).toFixed(0)}%`;
-    };
-    rangeEl.innerHTML = `${side("oop")} · ${side("ip")}. EQR (equity realization) is EV divided by the share of the pot your equity would win.`;
-  } else {
-    rangeEl.textContent = state.mode === "strategy" ? "" : "This flop was solved before equity was exported. Re-solve it with --force to see equity.";
-  }
-}
-
-function showDetail(root, node, c, cls) {
-  state.focus = cls;
-  const el = root.querySelector("#st-detail");
-  if (!c) {
-    el.innerHTML = cls
-      ? `<h3>${cls}</h3><p class="hint">Not in this range at this point.</p>`
-      : `<h3>Hand detail</h3><p class="hint">Hover a cell to see each combo's strategy and EV. Click to pin it.</p>`;
-    return;
-  }
-  const head = node.actions.map((a) => `<th><i style="background:${actionColor(a, node.actions)}"></i>${actionText(a)}</th>`).join("");
-  const row = (label, strat, ev, reach, eq) => {
-    const best = Math.max(...ev);
-    return `<tr><td>${label}${reach !== undefined ? `<small>${(reach * 100).toFixed(0)}%</small>` : ""}</td>${strat
-      .map((s, i) => `<td class="${ev[i] === best ? "best" : ""}">${(s * 100).toFixed(0)}%<small>${ev[i].toFixed(2)}</small></td>`)
-      .join("")}<td>${eq == null ? "–" : `${(eq * 100).toFixed(0)}%`}</td></tr>`;
-  };
-  el.innerHTML = `
-    <h3>${cls} <small>${c.reach.toFixed(2)} combos</small></h3>
-    <table class="combos">
-      <thead><tr><th></th>${head}<th>Equity</th></tr></thead>
-      <tbody>
-        ${row("All", c.freq, c.ev, undefined, c.hasEq ? c.eq : null)}
-        ${c.hands.map((h) => row(cardsHtml(h.combo, "tiny"), h.strat, h.ev, h.reach, h.eq)).join("")}
-      </tbody>
-    </table>
-    <p class="hint">Each cell shows frequency and EV in bb. The small % next to a combo is how often it gets to this spot.</p>`;
+  renderNodeView(
+    { grid: root.querySelector("#st-grid"), detail: root.querySelector("#st-detail"), range: root.querySelector("#st-range") },
+    node,
+    view,
+    { board: state.flop, name },
+  );
 }
