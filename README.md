@@ -23,6 +23,11 @@ It has three parts:
    - **Reports** compares one decision (e.g. the c-bet after a check) across every solved flop,
      sortable by action frequency and filterable by texture, so you can learn the patterns
      instead of memorizing single boards.
+   - **Simplify** turns the solver's play at one decision into a few rules you can use at the
+     table (one bet size, and bet, check or mix by hand type), per board texture across every
+     solved flop, and shows how much EV the rules give up. The **Simple** tab in Study and the
+     Postflop solver does the same for the decision on screen (see
+     [Simple strategies](#simple-strategies)).
    - **Preflop solver** shows GTO preflop ranges for 6-max cash games: every seat's opens,
      3-bets, 4-bets and calls as 13×13 grids, with the EV of every hand and action. Browse the
      bundled charts, or solve your own stack depth, bet sizes and rake with the local server.
@@ -35,6 +40,10 @@ It has three parts:
      [Player types](#player-types)), and solve again to find the best exploit, side by side
      with GTO. Needs the local server below.
    - **Ranges** shows the preflop ranges each spot was solved with.
+   - **Multiway solver** solves three-way pots, the ones you see all the time in live and
+     low-stakes games: set up three ranges and a board, then browse every player's strategy,
+     EV and equity on every street (see [Multiway solver](#multiway-solver)). Needs the local
+     server too.
 
 ## Run it
 
@@ -61,6 +70,12 @@ python3 -m http.server 8000
 
 Any static file server works (the page fetches `data/*.json`, so opening `index.html`
 directly from disk won't). You can also publish the `web/` folder with GitHub Pages.
+
+The web app's tests run with Node 22 or later, from the repo root:
+
+```sh
+node --test "tests/*.test.mjs"
+```
 
 ## Drill
 
@@ -197,6 +212,51 @@ Limits:
 - Hand strength is equity against the other player's starting range on the current board, not
   against their range on the line, so it's a ranking of raw strength, draws included.
 
+## Simple strategies
+
+A solver mixes most hands between several sizes, which you can't copy at the table. The
+simplifier finds a strategy you can actually play and tells you what it costs:
+
+- **One bet size, by hand type**: drop the other sizes and give each hand type one rule.
+- **Every size, by hand type**: the same rules, keeping every size the solver uses.
+- **One action with every hand**: e.g. a range bet, when that's nearly as good.
+
+Hand types are two pair or better, overpairs, top pair with a good kicker (one of the three best
+kickers not on the board) or a weak one, second pair, weak pairs, strong draws (flush draws and
+open-enders), weak draws (gutshots and backdoor flush draws), ace high and air. A hand type gets
+the action the solver takes most with it. If that leaves the range's frequencies more than 5
+points off the solver's, the hand types that help most get a closer rule: a split on something
+you can see at a glance ("bet with a backdoor flush draw, otherwise check") or a mix in quarters
+("bet half the time"). The **Rules** option picks fewer or more of those. Hands that the solver
+bets in a size you dropped bet the kept size instead, or check if that's worth more to them.
+
+**Simple tab.** In Study and the Postflop solver, the Simple tab above the grid shows each
+simple strategy with the EV it gives up, and recommends the simplest one within 1% of the pot
+(0.5% and 2% are options). The grid colors every hand by its rule, hovering a cell shows each
+combo's hand type, the solver's play and the rule's, and the hand type table shows how the
+solver plays each type, the rule, and what it costs. **Copy rules** copies them as text.
+
+**Simplify tab.** Pick a spot and a decision (e.g. BTN's c-bet after BB checks) to get one set
+of rules for every solved flop, and one per board texture: monotone, paired, ace high, two or
+more broadways, connected, king to jack high and dry, ten high or lower and dry. Each texture's
+rules are made from the solver's play on all its flops, and scored on each one: the card shows
+the average and the worst flop, and **Each flop** opens any of them in Study.
+
+**What "gives up" means.** The solver exports every hand's EV for every action, so the loss is
+what each hand gets with the rule against what it gets with the solver's mix, weighted by how
+often it gets there, as a share of the pot. That holds the other player's strategy fixed. A
+player who adjusts to your simple strategy can take back more, so treat it as a lower bound;
+a note appears when a rule moves your range's frequencies 20 points or more, or puts 10% or
+more of the range in a size the solver hardly uses. A solve that isn't fully converged can make
+a simple rule look as good as the solver or slightly better: below the solve's own precision
+the numbers say "within the solve's precision", and decisions the solver rarely reaches get a
+warning that their numbers are rough.
+
+**Check it against an opponent who adjusts.** In the Postflop solver, **Lock this simple
+strategy** on the Simple tab saves a lock (see [Node locking](#node-locking)) with every combo
+on its rule. Click **Solve with this lock**, and the Locks panel shows each player's EV for the
+whole hand, GTO against the solve where the other player adjusts to your rules.
+
 ## Preflop solver
 
 The **Preflop solver** tab shows a whole 6-max preflop solution: for every seat and every line
@@ -207,7 +267,8 @@ hand out. The seat strip shows who's still in (click a seat to see its range at 
 and the **EV** tab colors the grid by each hand's EV instead of its strategy. When the hand
 reaches a flop you get every player's range, and a heads-up pot that isn't all-in has
 **Open in postflop Solver**, which fills in the Postflop solver's ranges, pot, stacks and rake
-(and bet sizes from the matching bundled spot) so you only pick a board.
+(and bet sizes from the matching bundled spot) so you only pick a board. A three-way pot has
+**Open in Multiway solver** instead, which does the same in the Multiway solver.
 
 The bundled charts in `web/data/preflop/` all use 2.5bb opens (3bb from the SB, which raises
 or folds), 3-bets to 3x the open in position and 4x out of position (plus one open per caller
@@ -279,6 +340,74 @@ solve takes under a minute.
   three-way equity with two thirds of the position and playability terms. The numbers are in
   `solver/src/preflop/model.rs`; `scripts/fit_realization.py` refits them from the library and
   the extra spots in `scripts/calibration/` (`run.sh` solves those).
+
+## Multiway solver
+
+The **Multiway solver** tab solves pots with three players from the flop, turn or river, on
+your own machine, and lets you browse the whole tree like the Postflop solver: the 13×13 grid
+of the player to act (strategy, EV or equity per hand, every combo on hover), a strip with
+each player's stack, chips in, range EV and equity at that point, and a report of the next
+player's strategy and everyone's equity on every turn or river card.
+
+1. Pick a preset under **Start from** (CO opens and BTN and BB call, BTN opens and the blinds
+   call, UTG opens and BTN and BB call, or a limped pot), or open a three-way pot from the
+   Preflop solver. Players are listed in the order they act after the flop.
+2. Set the board, pot, stacks, rake and bet sizes. Each player has their own bet sizes per
+   street; an empty box means that player only checks there (no leads). Raises are shared,
+   and **Raises per street** caps them. The line under the sizes shows how big the tree is
+   and how much memory it needs, as you type.
+3. Press **Solve**. The progress line shows the accuracy (exploitability, % of the pot) as it
+   drops; **Stop** keeps the strategy so far. When it's done, click actions to walk the tree.
+
+Three-way trees are big, so the presets keep them lean: on the flop only the preflop raiser
+bets (one 33% size) and the others can call, raise 3x or fold (in the limped pot everyone can
+bet 50% and nobody raises); on the turn and river everyone can bet one size and there are no
+raises. The presets need 3 to 5.3 GB of memory. On 4 cores the CO preset on Ks7d2c (2 million
+nodes, 3.8 GB) takes about 7 seconds per iteration and gets to 1.8% of the pot after 40
+iterations (5 minutes) and 0.74% after 60 (7 minutes); the limped pot, with wider ranges,
+takes about 10 seconds per iteration. A turn spot solves in a few seconds at most and a river
+spot in well under one. Every option multiplies the tree: on that preset, a second flop size
+for the raiser makes it about 1.9 times bigger, letting everyone bet the flop about 2.6 times,
+and raises on the turn and river about 4 times. A tree over `--max-memory-gb` is refused, and
+when a solve doesn't fit next to the last heads-up solve (or the other way round), the older
+one is dropped to make room.
+
+From the command line, `pt-multiway` solves one spot and prints its size, progress and each
+player's EV:
+
+```sh
+cd solver
+cargo run --release --bin pt-multiway -- --spot ../web/data/multiway/presets.json \
+  --preset co_btn_bb_srp --board Ks7d2c --accuracy 1
+```
+
+`--spot` takes one spot or a file of them (then `--preset` picks one by id), `--count` only
+prints the tree size and memory, and `--iters`, `--accuracy`, `--check-every` and
+`--threads` work as in the other tools. A spot has the shape of the presets in
+`web/data/multiway/presets.json`: `players` and `ranges` in postflop order, `pot_bb`,
+`stack_bb`, `bets` per street (`bet`, one string per player, and `raise`), `max_raises` and
+`rake`.
+
+### How it works
+
+- **Solving.** Discounted CFR with the same discounts as postflop-solver, alternating between
+  the three players, on every core. Accuracy is the average over the players of what each
+  would gain by best-responding to the others, as a % of the starting pot. Three-player games
+  have no guarantee of converging to an equilibrium, but poker trees do in practice: the
+  exploitability falls steadily to well under 1% of the pot.
+- **Cards.** Every player's hand removes cards from the other two ranges, and the two
+  opponents' hands from each other's, exactly: each hand's sums over pairs of opponent hands
+  use inclusion-exclusion over the cards they share, and a sweep through the hands in order of
+  strength splits the pot on ties (three-way ties included). A player who folds still holds
+  their cards. The terminal values match a brute-force check, and with two players a solve
+  comes to the same values as postflop-solver (both are tested).
+- **Speed.** When an opponent's strategy never takes an action with any hand, nothing after it
+  matters to the others and it's skipped; the card loops run 8 values at a time on CPUs with
+  AVX2.
+- **Limits.** Everyone starts with the same stack (no side pots), rake is taken from the pot
+  minus any uncalled bet, there is no node locking or drilling of multiway solves yet, and
+  turn and river cards that are the same up to suits are solved separately (no suit
+  isomorphism), so two-tone and monotone flops cost the same as rainbow ones.
 
 ## Solve more spots and flops
 
@@ -358,6 +487,11 @@ representative per texture.
 | `GET /api/preflop/status` | | state (`tables` while building the equity tables), iteration, exploitability and its history, time |
 | `POST /api/preflop/stop` | | stops early and keeps the current strategy |
 | `GET /api/preflop/solution` | | the last preflop solve, in the same format as `web/data/preflop/*.json` |
+| `POST /api/multiway/preview` | `{spot, board}`; `spot` has the shape of the presets in `web/data/multiway/presets.json` | the tree's size, hands per player and memory |
+| `POST /api/multiway/solve` | `{spot, board, accuracy, max_iters}` | starts a multiway solve (replacing any current one) |
+| `GET /api/multiway/status` | | state, iteration, exploitability and its history, time, memory, and each player's EV once solved |
+| `POST /api/multiway/stop` | | stops early and keeps the current strategy |
+| `POST /api/multiway/node` | `{history}` | the node after `history`: a decision (strategy, EV and equity per combo of the player to act, and every player's stack, chips in, range EV and equity), a chance node (the next player's strategy and everyone's equity on every card), or terminal |
 
 `history` lists action indexes at decision nodes and card ids (0 to 51, `4 * rank + suit` with
 2 = 0 and clubs, diamonds, hearts, spades = 0 to 3) at chance nodes. `solution` is `"gto"` or
@@ -381,7 +515,8 @@ the extra bets and raises come from the weakest hands. Situations without a rule
 - Rebuild the library's spots from the preflop solver's ranges.
 - Calibrate the preflop solver's postflop model on more spots and flops.
 - Aggregated turn and river reports across many flops.
-- Multiway pots.
+- Multiway: node locking and drills on three-way solves, and suit isomorphism to make
+  two-tone and monotone flops faster.
 
 ## License
 

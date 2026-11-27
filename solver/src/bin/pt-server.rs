@@ -23,14 +23,23 @@
 //!   GET  /api/preflop/status    its progress
 //!   POST /api/preflop/stop      stop early and keep the current strategy
 //!   GET  /api/preflop/solution  the finished solve, in the format of web/data/preflop/*.json
+//!   POST /api/multiway/preview  {spot, board}  the size of a 2- or 3-player tree and its memory
+//!   POST /api/multiway/solve    {spot, board, accuracy, max_iters}  start a multiway solve
+//!                               (spot in the format of web/data/multiway/presets.json)
+//!   GET  /api/multiway/status   its progress
+//!   POST /api/multiway/stop     stop early and keep the current strategy
+//!   POST /api/multiway/node     {history}  describe the node after `history`
 //!
 //! `history` lists action indexes for decision nodes and card ids (0-51) for chance nodes,
 //! the same as postflop-solver's `apply_history`. `solution` is "gto" (the last solve without
 //! locks) or "exploit" (the last solve with them). The two are kept side by side while they
-//! fit under --max-memory-gb, so every node can be compared.
+//! fit under --max-memory-gb, so every node can be compared. The last multiway solve is kept
+//! too; when a new solve of either kind doesn't fit next to the other kind's, the older one is
+//! dropped.
 
 use postflop_solver::*;
 use pt_solver::locks::{self, LockedNode, Recipe};
+use pt_solver::multiway::service::Service as MultiwayService;
 use pt_solver::preflop::{equity::default_cache_path, service::Service as PreflopService};
 use pt_solver::profile::{self, Profile};
 use pt_solver::*;
@@ -431,6 +440,7 @@ struct App {
     worker_kind: Kind,
     locks: LockSet,
     preflop: PreflopService,
+    multiway: MultiwayService,
 }
 
 type ApiResult = Result<Value, (u16, String)>;
@@ -459,6 +469,24 @@ fn actors_json(actors: &[Option<usize>]) -> Value {
 }
 
 impl App {
+    /// Memory the heads-up solutions hold, in GB.
+    fn heads_up_memory_gb(&self) -> f64 {
+        let sols = self.solutions.lock().unwrap();
+        [&sols.gto, &sols.exploit].into_iter().flatten().map(|s| s.memory_gb).sum()
+    }
+
+    /// Starts a multiway solve. The heads-up solutions are dropped if it doesn't fit next to them.
+    fn start_multiway(&mut self, body: &str) -> ApiResult {
+        let preview = self.multiway.preview(body)?;
+        let need = preview["memory_gb"].as_f64().unwrap_or(0.0);
+        if need <= self.max_memory_gb && need + self.heads_up_memory_gb() > self.max_memory_gb {
+            self.stop_worker();
+            *self.solutions.lock().unwrap() = Solutions::default();
+            self.status.lock().unwrap().state = "idle";
+        }
+        self.multiway.start(body, self.max_memory_gb - self.heads_up_memory_gb())
+    }
+
     /// Stops the worker. Returns whether it was still solving, i.e. its result is incomplete.
     fn stop_worker(&mut self) -> bool {
         let mut was_solving = false;
@@ -515,6 +543,9 @@ impl App {
             }
         }
 
+        if memory_gb + self.multiway.memory_gb() > self.max_memory_gb {
+            self.multiway.clear();
+        }
         // A solve replaces the last one of its kind. The other kind stays for comparison if it's
         // the same tree and both fit in memory. A solve that was cut off by this one is dropped.
         let kind = if req.locks { Kind::Exploit } else { Kind::Gto };
@@ -994,6 +1025,11 @@ impl App {
             (Method::Post, "/api/preflop/solve") => self.preflop.start(&body),
             (Method::Get, "/api/preflop/status") => Ok(self.preflop.status()),
             (Method::Post, "/api/preflop/stop") => self.preflop.stop(),
+            (Method::Post, "/api/multiway/preview") => self.multiway.preview(&body),
+            (Method::Post, "/api/multiway/solve") => self.start_multiway(&body),
+            (Method::Get, "/api/multiway/status") => Ok(self.multiway.status()),
+            (Method::Post, "/api/multiway/stop") => self.multiway.stop(),
+            (Method::Post, "/api/multiway/node") => self.multiway.node(&body),
             (Method::Post, "/api/solve") => self.start_solve(&body),
             (Method::Post, "/api/stop") => {
                 self.cancel.store(true, Ordering::SeqCst);
@@ -1096,6 +1132,7 @@ fn main() {
         worker_kind: Kind::Gto,
         locks: LockSet::default(),
         preflop: PreflopService::new(default_cache_path()),
+        multiway: MultiwayService::new(),
     };
     for req in server.incoming_requests() {
         app.handle(req);

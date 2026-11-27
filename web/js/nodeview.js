@@ -13,6 +13,7 @@ const heat = (x) => `hsl(${Math.round(Math.max(0, Math.min(1, x)) * 130)} 60% 48
  * @param node  decision node: {player, actions, hands, combos, pot_bb, equity?, ev_bb?}
  * @param view  persistent view state: {mode, focus, pinned}
  * @param opts  {board, name(player)}, and optionally:
+ *              rangeHtml: the line under the grid, in place of the heads-up equity and EV summary
  *              compare: {label, node, note?}  the same decision in another solution, shown in the
  *                       hand detail as an extra row; `note` explains that row
  *              marked: Set of classes to flag in the grid
@@ -71,7 +72,9 @@ export function renderNodeView(els, node, view, opts) {
   draw();
   showDetail(els.detail, node, view.focus ? summary.get(view.focus) : null, view.focus, view, cmp);
 
-  if (node.equity) {
+  if (opts.rangeHtml !== undefined) {
+    els.range.innerHTML = opts.rangeHtml;
+  } else if (node.equity) {
     const side = (p) => {
       const eq = node.equity[p === "oop" ? 0 : 1];
       const ev = node.ev_bb[p === "oop" ? 0 : 1];
@@ -115,12 +118,13 @@ function showDetail(el, node, c, cls, view, cmp) {
     }</p>`;
 }
 
-/** Strategy / EV / Equity tab markup and wiring. */
-export function modeTabsHtml(id) {
+/** Strategy / EV / Equity tab markup and wiring, plus Simple (simplifyview.js) where it's offered. */
+export function modeTabsHtml(id, { simple = false } = {}) {
   return `<div class="tabs" id="${id}">
     <button data-mode="strategy" class="active">Strategy</button>
     <button data-mode="ev">EV</button>
     <button data-mode="equity">Equity</button>
+    ${simple ? `<button data-mode="simple" title="A few simple rules for this decision, and the EV they give up">Simple</button>` : ""}
   </div>`;
 }
 

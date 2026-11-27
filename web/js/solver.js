@@ -7,6 +7,7 @@ import { cardsHtml, splitCards, RANKS } from "./cards.js";
 import { loadIndex, nodeHands, rangeFrequencies, classSummary, actionText, actionColor, actionLabel } from "./data.js";
 import { renderNodeView, modeTabsHtml, wireModeTabs } from "./nodeview.js";
 import * as types from "./profiles.js";
+import { renderSimple } from "./simplifyview.js";
 
 const state = {
   spot: null,
@@ -21,7 +22,7 @@ const state = {
   goSeq: 0, // counts navigations, so a slow answer can't replace a later one
   onDrill: null,
 };
-const view = { mode: "strategy", focus: null, pinned: false };
+const view = { mode: "strategy", focus: null, pinned: false, level: null, type: null };
 const STREETS = ["flop", "turn", "river"];
 const ORDERS = [
   ["ev", "The ones that lose the least EV"],
@@ -348,6 +349,7 @@ async function goTo(root, path, solution = state.solution, { keepFocus = false, 
   if (!keepFocus) {
     view.focus = null;
     view.pinned = false;
+    view.level = null;
   }
   render(root);
 }
@@ -514,7 +516,7 @@ function lockBadge(node, lock) {
 function renderDecision(root) {
   const main = root.querySelector("#sv-main");
   const detail = root.querySelector("#sv-detail");
-  main.innerHTML = `${modeTabsHtml("sv-mode")}<div id="sv-grid"></div><p id="sv-range" class="meta"></p><p id="sv-cmp" class="meta"></p>`;
+  main.innerHTML = `${modeTabsHtml("sv-mode", { simple: !state.editor })}<div id="sv-grid"></div><p id="sv-range" class="meta"></p><p id="sv-cmp" class="meta"></p><div id="sv-simple"></div>`;
   if (state.editor) {
     detail.innerHTML = `<div id="sv-editor"></div><div id="sv-hand"></div>`;
     renderEditor(root);
@@ -544,6 +546,25 @@ function drawGrid(root) {
   const node = state.node;
   const ed = state.editor;
   const main = root.querySelector("#sv-main");
+  const simple = main.querySelector("#sv-simple");
+  if (view.mode === "simple" && !ed) {
+    main.querySelector("#sv-range").textContent = "";
+    if (node.locked) {
+      // The lock leaves some plays out, and their EVs don't mean much: nothing reaches them.
+      renderNodeView({ grid: main.querySelector("#sv-grid"), detail: root.querySelector("#sv-detail"), range: main.querySelector("#sv-range") }, node, view, { board: node.board, name });
+      simple.innerHTML = `<p class="hint simple">This decision is locked in this solve, so there's nothing to simplify: the EVs of the plays the lock leaves out don't mean much. Switch to GTO in the Locks panel to simplify the solver's own play here.</p>`;
+      return;
+    }
+    const title = `${state.spot.oop} vs ${state.spot.ip} · ${node.board} · ${[...state.path.map((p) => p.label), `${name(node.player)} to act`].join(" › ")}`;
+    renderSimple(
+      { grid: main.querySelector("#sv-grid"), detail: root.querySelector("#sv-detail"), simple },
+      node,
+      view,
+      { board: node.board, name, title, onLock: node.actions.length > 1 ? (level) => lockSimple(root, level) : null },
+    );
+    return;
+  }
+  simple.innerHTML = "";
   const shown = ed?.preview ? previewNode(node, ed.preview.strategy) : node;
   let compare = null;
   if (ed) {
@@ -574,6 +595,7 @@ function drawGrid(root) {
 
 function openEditor(root, lock) {
   const node = state.node;
+  if (view.mode === "simple") view.mode = "strategy";
   const { freq } = rangeFrequencies(nodeHands(node), node.actions.length);
   const keep = node.actors.some((a) => a === node.player);
   state.editor = {
@@ -819,6 +841,27 @@ async function saveLock(root) {
     return;
   }
   state.editor = null;
+  await refreshStatus(root);
+  render(root);
+}
+
+/** Locks the decision shown to a simple strategy from the Simple tab, every combo to its rule. */
+async function lockSimple(root, level) {
+  const node = state.node;
+  const hands = {};
+  node.hands.forEach((row, i) => {
+    const s = level.strategies[i];
+    if (row && s) hands[node.combos[i]] = s.map((x) => +x.toFixed(4));
+  });
+  await api("locks/add", {
+    history: historyOf(state.path),
+    solution: state.solution,
+    hands,
+    wild: [],
+    keep_path: node.actors.some((a) => a === node.player),
+    label: [...state.path.map((p) => p.label), `${name(node.player)}: ${level.name}`].join(" › "),
+    crumbs: state.path.map((p) => p.label),
+  });
   await refreshStatus(root);
   render(root);
 }
