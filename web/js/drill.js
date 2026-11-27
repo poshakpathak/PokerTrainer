@@ -1074,10 +1074,16 @@ async function liveContext() {
 /** Each player's hands and their weights at the start, from their first decision. */
 async function liveRanges(ctx) {
   if (!live.ranges) {
-    const first = await api("node", { history: [], solution: ctx.solution });
-    const second = await api("node", { history: [0], solution: ctx.solution });
-    if (first.type !== "decision" || second.type !== "decision") throw new Error("The solve doesn't start with a decision for each player.");
     const hands = (n) => n.combos.map((combo, i) => n.hands[i] && { combo, w: n.hands[i][0] }).filter(Boolean);
+    const first = await api("node", { history: [], solution: ctx.solution });
+    // The other player's range at their first decision, after an action the first player takes
+    // with some hand: a lock can take one out entirely (e.g. "always bets").
+    let second = null;
+    for (let a = 0; first.type === "decision" && a < first.actions.length && !second; a++) {
+      const n = await api("node", { history: [a], solution: ctx.solution });
+      if (n.type === "decision" && hands(n).length) second = n;
+    }
+    if (first.type !== "decision" || !second) throw new Error("The solve doesn't start with a decision for each player.");
     live.ranges = { [first.player]: hands(first), [second.player]: hands(second) };
   }
   return live.ranges;
