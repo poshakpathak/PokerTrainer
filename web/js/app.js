@@ -1,8 +1,8 @@
 import { initStudy, openInStudy } from "./study.js";
-import { initDrill, openDrill } from "./drill.js";
+import { initDrill, openDrill, refreshDrill } from "./drill.js";
 import { initRanges } from "./ranges.js";
 import { initReports } from "./reports.js";
-import { initSolver, prefillSolver, openSolverAt } from "./solver.js";
+import { initSolver, prefillSolver, openSolverAt, refreshSolver } from "./solver.js";
 import { initPreflopSolver, openPreflopAt } from "./pfsolver.js";
 
 const views = {
@@ -15,7 +15,7 @@ const views = {
 };
 const started = {};
 
-function show(name) {
+function show(name, { refresh = true } = {}) {
   for (const [k, el] of Object.entries(views)) el.hidden = k !== name;
   document.querySelectorAll("header nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === name));
   try {
@@ -25,7 +25,11 @@ function show(name) {
     started[name] = start(name).catch((e) => {
       views[name].innerHTML = `<p class="panel error">${e.message}</p>`;
     });
+    return started[name];
   }
+  // The Solver and the Drill share the solve on pt-server: catch up with what the other changed.
+  if (refresh && name === "solver") return started[name].then(() => refreshSolver(views.solver));
+  if (refresh && name === "drill") return started[name].then(() => refreshDrill());
   return started[name];
 }
 
@@ -54,7 +58,7 @@ async function openPreflop({ pack, history, cls }) {
 
 /** Drills a spot picked in one of the solver tabs. */
 async function drill(spec) {
-  const shown = show("drill");
+  const shown = show("drill", { refresh: false }); // openDrill deals for the spec anyway
   openDrill(spec);
   await shown;
 }

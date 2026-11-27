@@ -6,8 +6,9 @@
 //               facing 3-bets and 4-bets, from any seat.
 //   Flops       flop decisions from the solved library in data/.
 //   Your solve  whole hands in the spot solved on pt-server, flop to river. The other player
-//               holds a real hand and plays the solver's strategy for it; turn and river cards
-//               are dealt at random.
+//               holds a real hand and plays the solver's strategy for it, or a player type
+//               (calling station, nit, ...) while you're scored against the best exploit; turn
+//               and river cards are dealt at random.
 //
 // Stats, recent decisions, a log for the leak report and the mistakes to review are kept in
 // localStorage.
@@ -18,9 +19,11 @@ import { loadIndex, loadSolution, nodeHands, actionText, actionColor, actionLabe
 import { renderNodeView, modeTabsHtml, wireModeTabs } from "./nodeview.js";
 import * as pf from "./pfpack.js";
 import { showdown } from "./handeval.js";
+import * as types from "./profiles.js";
 
 const STORE = "pokertrainer.drill.v1";
 const SETTINGS = "pokertrainer.drill.settings.v1";
+const PTYPE_PREFS = "pokertrainer.ptype.v1"; // shared with the Postflop solver tab
 const LOG_MAX = 3000;
 const RECENT_MAX = 30;
 const MISTAKES_PER_SOURCE = 200;
@@ -45,7 +48,8 @@ const settings = {
   mode: "new", // or "review"
   preflop: { pack: null, cats: PF_CATS.map(([id]) => id), seat: "any", hands: "close", line: null },
   flops: { spots: null, seat: "both", depth: "first" },
-  live: { seat: "both", streets: [...STREETS], solution: "gto", only: null },
+  // opponent: "gto", "exploit" (the solve with locks, whatever it locks) or a player type's id.
+  live: { seat: "both", streets: [...STREETS], opponent: "gto", only: null },
 };
 
 const ui = {
@@ -61,6 +65,7 @@ const ui = {
   busy: 0, // the deal still in flight, for the "Dealing…" hint
   rangeOpen: true,
   rangeView: { mode: "strategy", focus: null, pinned: true },
+  watching: false, // polling a solve started from here
 };
 let data = loadStore();
 let session = newSession();
@@ -174,7 +179,10 @@ function loadSettings() {
     if (SOURCES.some(([id]) => id === s.source)) settings.source = s.source;
     Object.assign(settings.preflop, s.preflop || {}, { line: null });
     Object.assign(settings.flops, s.flops || {});
-    Object.assign(settings.live, s.live || {}, { only: null });
+    const { solution, ...live } = s.live || {};
+    Object.assign(settings.live, live, { only: null });
+    // Saved before player types: "exploit" meant playing against your locks.
+    if (!live.opponent && solution === "exploit") settings.live.opponent = "exploit";
   } catch {}
 }
 
@@ -289,6 +297,19 @@ export async function initDrill(root, hooks = {}) {
 }
 
 /**
+ * When the tab is shown again: the Solver tab may have changed the solve or the player type. A hand
+ * from a solve that's gone is dealt again; otherwise only the settings are brought up to date.
+ */
+export async function refreshDrill() {
+  if (!ui.ready || settings.source !== "live") return;
+  const status = await api("status").catch(() => null);
+  const plan = status?.solutions && (status.solutions.gto || status.solutions.exploit) ? opponentPlan(status) : null;
+  const key = plan?.ready ? solveKey(status, plan.solution) : null;
+  if (key && key === live.key && current) return renderSettings();
+  refresh();
+}
+
+/**
  * Drills one spot from another tab:
  *   {preflop: {pack, history}}       one decision of a preflop chart
  *   {live: {only, solution}}         the solve on pt-server: whole hands, or `only` one decision
@@ -312,7 +333,7 @@ function applySpec(spec) {
   } else if (spec.live) {
     settings.source = "live";
     settings.live.only = spec.live.only || null;
-    if (spec.live.solution) settings.live.solution = spec.live.solution;
+    if (spec.live.solution) settings.live.opponent = spec.live.solution === "exploit" ? "exploit" : "gto";
   }
   saveSettings();
 }
@@ -467,6 +488,64 @@ function renderFlopSettings(el) {
   }
 }
 
+const other = (p) => (p === "oop" ? "ip" : "oop");
+
+function loadTypePrefs() {
+  try {
+    return { player: "oop", id: null, strength: 1, ...JSON.parse(localStorage.getItem(PTYPE_PREFS) || "{}") };
+  } catch {
+    return { player: "oop", id: null, strength: 1 };
+  }
+}
+
+function saveTypePrefs(change) {
+  try {
+    localStorage.setItem(PTYPE_PREFS, JSON.stringify({ ...loadTypePrefs(), ...change }));
+  } catch {}
+}
+
+/**
+ * What playing against the chosen opponent takes: the solution to deal from, the player type
+ * the other player plays in it, and whether that solve is there yet. For a player type you play
+ * one seat (`hero`) and the type the other (`villain`).
+ */
+function opponentPlan(status) {
+  const s = settings.live;
+  const sols = status.solutions || {};
+  const typed = sols.exploit?.profile || null;
+  const opp = s.opponent || "gto";
+  if (opp === "gto" || opp === "exploit") {
+    // Falls back to whichever solve there is.
+    const solution = sols[opp] ? opp : sols.gto ? "gto" : "exploit";
+    if (solution === "exploit" && typed) {
+      // The solve with locks is against a player type: the same as picking that type.
+      const want = types.profileById(typed.id) || { id: typed.id, name: typed.name, rules: types.rulesFromList(typed.rules) };
+      return { ready: true, solution, typed, want, hero: other(typed.player), villain: typed.player, strength: typed.strength };
+    }
+    return { ready: true, solution, typed: null };
+  }
+  const want = types.profileById(opp)
+    || (typed?.id === opp ? { id: typed.id, name: typed.name, rules: types.rulesFromList(typed.rules) } : null);
+  if (!want) {
+    s.opponent = "gto";
+    return opponentPlan(status);
+  }
+  const hero = s.seat === "oop" || s.seat === "ip" ? s.seat : typed?.id === opp ? other(typed.player) : "ip";
+  const strength = s.strength ?? 1;
+  const ready = !!sols.exploit && typed?.id === opp && typed.player === other(hero) && Math.abs(typed.strength - strength) < 0.01;
+  return { ready, solution: "exploit", typed: ready ? typed : null, want, hero, villain: other(hero), strength };
+}
+
+/** "Setting up BB as a calling station: 40%" or "Solving against a calling station: iteration 12, …". */
+function solveProgressText(status) {
+  const p = status.profile;
+  const who = p ? `${esc(status.spot?.[p.player] || p.player)} as ${esc(types.typeNoun(p))}` : "the locks";
+  if (status.phase === "profile") return `Setting up ${who}: ${pct(status.phase_progress || 0)}`;
+  const acc = status.exploitability_pct == null ? "" : `, accuracy ${status.exploitability_pct.toFixed(2)}% of the pot (target ${status.target_pct}%)`;
+  const against = status.kind === "exploit" ? (p ? ` against ${esc(types.typeNoun(p))}` : " with your locks") : "";
+  return `Solving${against}: iteration ${status.iteration}${acc}`;
+}
+
 async function renderLiveSettings(el) {
   const s = settings.live;
   el.innerHTML = `<p class="hint">Checking the solver server…</p>`;
@@ -480,40 +559,98 @@ cargo run --release --bin pt-server</code></pre>
     return;
   }
   const sols = status.solutions || {};
+  const solving = status.state === "solving";
   if (!sols.gto && !sols.exploit) {
-    el.innerHTML = `<p class="hint">${status.state === "solving" ? "A solve is running. Come back when it's done." : "Solve a spot in the Postflop solver tab first, then drill it here."}</p>`;
+    el.innerHTML = `<p class="hint">${solving ? "A solve is running. Come back when it's done." : "Solve a spot in the Postflop solver tab first, then drill it here."}</p>`;
+    if (solving) watchSolve();
     return;
   }
-  if (!sols[s.solution]) s.solution = sols.gto ? "gto" : "exploit";
   const spot = status.spot;
+  const plan = opponentPlan(status);
+  const typed = sols.exploit?.profile || null;
+  if (plan.want && s.opponent === "exploit") {
+    // Came from the solve against a player type: pick that type, so seat and strength changes work.
+    Object.assign(s, { opponent: plan.want.id, strength: plan.strength, seat: plan.hero });
+    saveSettings();
+  }
   const lockedBy = [...new Set((status.locks || []).map((l) => l.player))];
+  const known = new Set(types.PROFILES.map((p) => p.id));
+  const typeMode = !!plan.want;
+  const locks = status.locks?.length || 0;
+  let typeBlock = "";
+  if (typeMode) {
+    const noun = esc(types.typeNoun(plan.want));
+    const villain = esc(spot[plan.villain]);
+    let state;
+    if (plan.ready) {
+      state = `<p class="hint">${villain} plays like ${noun} at every decision, and you're scored against the best way to exploit them.</p>`;
+    } else if (solving) {
+      state = `<p class="meta" id="dr-solving">${solveProgressText(status)}</p>`;
+      watchSolve();
+    } else {
+      state = `<div class="typesolve">
+        <p class="hint">First the solver works out how ${villain} plays as ${noun} and the best way to exploit that. It's usually quicker than the GTO solve${
+          sols.exploit ? " and replaces the solve with locks you have now" : ""}${locks ? `, and keeps your ${locks === 1 ? "saved lock" : `${locks} saved locks`}` : ""}.</p>
+        <button class="primary" id="dr-typesolve">Solve against ${noun}</button>
+        <p class="error" id="dr-typeerr"></p>
+      </div>`;
+    }
+    typeBlock = `
+      <label>Strength <select id="dr-strength">${types.STRENGTHS.map(([v, t]) => `<option value="${v}">${t}</option>`).join("")}</select></label>
+      ${plan.want.blurb ? `<p class="meta">${esc(plan.want.blurb)}</p>` : ""}
+      ${state}`;
+  } else if (plan.solution === "exploit") {
+    typeBlock = `<p class="hint">${lockedBy.length === 1 ? `${esc(spot[lockedBy[0]])} plays your locks` : "The locked player plays your locks"}, and you're scored against the best exploit.</p>`;
+  }
   el.innerHTML = `
     <p class="meta"><b>${esc(spot.oop)}</b> (out of position) vs <b>${esc(spot.ip)}</b> on ${cardsHtml(status.board, "tiny")}<br>
       Pot ${bb(spot.pot_bb)}, ${bb(spot.stack_bb)} behind</p>
-    ${sols.gto && sols.exploit ? `<label>Play against <select id="dr-sol">
-      <option value="gto">GTO</option><option value="exploit">Your locks (exploit solve)</option></select></label>` : ""}
-    ${s.solution === "exploit" ? `<p class="hint">${lockedBy.length === 1 ? `${esc(spot[lockedBy[0]])} plays your locks` : "The locked player plays your locks"}, and you're scored against the best exploit.</p>` : ""}
+    <label>Play against <select id="dr-opp">
+      <option value="gto">GTO</option>
+      ${sols.exploit && !typed ? `<option value="exploit">Your locks (exploit solve)</option>` : ""}
+      <optgroup label="Player types">${types.PROFILES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}${
+        typed && !known.has(typed.id) ? `<option value="${esc(typed.id)}">${esc(typed.name)}</option>` : ""}</optgroup>
+    </select></label>
+    ${typeBlock}
     ${s.only ? `<div class="onlyspot"><span>Only this decision: <b>${esc(s.only.labels.length ? s.only.labels.join(" › ") : "the first one")}</b></span>
       <button class="x" id="dr-unonly" title="Play whole hands">×</button></div>` : `
-      <label>Your seat <select id="dr-lseat">
-        <option value="both">Either player</option><option value="oop">${esc(spot.oop)} (out of position)</option><option value="ip">${esc(spot.ip)} (in position)</option>
+      <label>${typeMode ? "You play" : "Your seat"} <select id="dr-lseat">
+        ${typeMode ? "" : `<option value="both">Either player</option>`}<option value="oop">${esc(spot.oop)} (out of position)</option><option value="ip">${esc(spot.ip)} (in position)</option>
       </select></label>
       <fieldset id="dr-streets"><legend>You decide on</legend>
         ${STREETS.filter((st) => STREETS.indexOf(st) >= STREETS.indexOf(streetOf(status.board)))
           .map((st) => `<label class="check"><input type="checkbox" value="${st}" ${s.streets.includes(st) ? "checked" : ""}> The ${st}</label>`).join("")}
       </fieldset>
-      <p class="hint">The other player gets a real hand and plays the solver's strategy for it. On streets you leave out, the solver plays your hand for you.</p>`}`;
-  const sol = el.querySelector("#dr-sol");
-  if (sol) {
-    sol.value = s.solution;
-    sol.onchange = () => {
-      s.solution = sol.value;
-      if (s.solution === "exploit" && lockedBy.length === 1) s.seat = lockedBy[0] === "oop" ? "ip" : "oop";
+      <p class="hint">The other player gets a real hand and plays ${typeMode ? "the player type" : "the solver's strategy"} for it. On streets you leave out, the solver plays your hand for you.</p>`}`;
+
+  const opp = el.querySelector("#dr-opp");
+  opp.value = typed && (s.opponent === "exploit" || s.opponent === typed.id) && plan.solution === "exploit" ? typed.id : plan.want ? plan.want.id : plan.solution;
+  opp.onchange = () => {
+    s.opponent = opp.value;
+    if (typed && opp.value === typed.id) {
+      s.strength = typed.strength;
+      s.seat = other(typed.player);
+    } else if (types.profileById(opp.value)) {
+      if (s.seat === "both") s.seat = "ip";
+      s.strength = loadTypePrefs().id === opp.value ? loadTypePrefs().strength : 1;
+    } else if (opp.value === "exploit" && lockedBy.length === 1) {
+      s.seat = other(lockedBy[0]);
+    }
+    saveSettings();
+    renderLiveSettings(el);
+    deal();
+  };
+  const strength = el.querySelector("#dr-strength");
+  if (strength) {
+    strength.value = String(plan.strength);
+    strength.onchange = () => {
+      s.strength = +strength.value;
       saveSettings();
       renderLiveSettings(el);
       deal();
     };
   }
+  el.querySelector("#dr-typesolve")?.addEventListener("click", (e) => solveAgainstType(e.target, plan, status));
   if (s.only) {
     el.querySelector("#dr-unonly").onclick = () => {
       s.only = null;
@@ -523,10 +660,11 @@ cargo run --release --bin pt-server</code></pre>
     return;
   }
   const seat = el.querySelector("#dr-lseat");
-  seat.value = s.seat;
+  seat.value = typeMode ? plan.hero : s.seat;
   seat.onchange = () => {
     s.seat = seat.value;
     saveSettings();
+    if (typeMode) renderLiveSettings(el);
     deal();
   };
   el.querySelector("#dr-streets").onchange = () => {
@@ -534,6 +672,42 @@ cargo run --release --bin pt-server</code></pre>
     saveSettings();
     deal();
   };
+}
+
+/** Sets the player type on the other seat and solves for the exploit, then deals. */
+async function solveAgainstType(btn, plan, status) {
+  btn.disabled = true;
+  const err = ui.root.querySelector("#dr-typeerr");
+  try {
+    await api("profile", types.profileRequest(plan.want, plan.villain, plan.strength));
+    await api("solve", { spot: status.spot, board: status.board, accuracy: status.target_pct || 0.5, max_iters: status.max_iters || 1000, locks: true });
+  } catch (e) {
+    btn.disabled = false;
+    if (err) err.textContent = e.message;
+    return;
+  }
+  saveTypePrefs({ player: plan.villain, id: plan.want.id, strength: plan.strength });
+  refresh();
+}
+
+/** While a solve runs, shows its progress and deals once it's done. */
+function watchSolve() {
+  if (ui.watching) return;
+  ui.watching = true;
+  const tick = async () => {
+    const st = settings.source === "live" ? await api("status").catch(() => null) : null;
+    if (!st || st.state !== "solving") {
+      ui.watching = false;
+      if (st && settings.source === "live") refresh();
+      return;
+    }
+    const text = solveProgressText(st);
+    const line = ui.root.querySelector("#dr-solving");
+    if (line) line.innerHTML = text;
+    if (!current) ui.root.querySelector("#dr-table").innerHTML = `<p class="hint">${text}</p>`;
+    setTimeout(tick, 1000);
+  };
+  setTimeout(tick, 1000);
 }
 
 // ---- Dealing -----------------------------------------------------------------------------
@@ -883,13 +1057,18 @@ async function liveContext() {
   if (!sols.gto && !sols.exploit) {
     return { message: status.state === "solving" ? "A solve is running. Come back when it's done." : "Solve a spot in the Postflop solver tab first, then drill it here." };
   }
-  const solution = sols[settings.live.solution] ? settings.live.solution : sols.gto ? "gto" : "exploit";
+  const plan = opponentPlan(status);
+  if (!plan.ready) {
+    const noun = types.typeNoun(plan.want);
+    return { message: status.state === "solving" ? solveProgressText(status) : `Solve against ${noun} first (on the left), then the hands start.` };
+  }
+  const { solution, typed } = plan;
   const key = solveKey(status, solution);
   if (live.key !== key) {
     live.key = key;
     live.ranges = null;
   }
-  return { status, solution, key, names: { oop: status.spot.oop || "OOP", ip: status.spot.ip || "IP" } };
+  return { status, solution, typed, hero: typed ? other(typed.player) : null, key, names: { oop: status.spot.oop || "OOP", ip: status.spot.ip || "IP" } };
 }
 
 /** Each player's hands and their weights at the start, from their first decision. */
@@ -916,7 +1095,7 @@ async function dealLive() {
   if (!streets.size) return { message: "Pick a street this solve plays." };
   // Hands that end before you get a decision on the chosen streets are dealt again.
   for (let attempt = 0; attempt < 30; attempt++) {
-    const hero = s.seat === "both" ? pick(["oop", "ip"]) : s.seat;
+    const hero = ctx.hero || (s.seat === "both" ? pick(["oop", "ip"]) : s.seat);
     const hand = newLiveHand(ctx, ranges, hero, streets);
     const q = await advanceLive(hand);
     if (q) return q;
@@ -989,16 +1168,25 @@ function playStep(hand, node, i, who, extra = {}) {
   hand.labels.push(`${hand.names[node.player]} ${actionLabel(a)}`);
 }
 
+/** "vs Calling station", "against your locks" or "GTO": who the hand is played against. */
+function againstText(hand) {
+  if (hand.typed) return `vs ${hand.typed.name}`;
+  return hand.solution === "exploit" ? "against your locks" : "GTO";
+}
+
 function liveQuestion(hand, node, row, review) {
   const k = node.actions.length;
   const street = streetOf(node.board);
+  // Against locks or a player type, how GTO plays the same hand here (if it gets here).
+  const gtoRow = hand.solution === "exploit" && node.compare?.solution === "gto" ? node.compare.hands[node.combos.indexOf(hand.combos[node.player])] : undefined;
   return {
     src: "live", review, hand, node, row,
     steps: hand.steps.slice(), names: hand.names, hero: node.player,
-    title: `${hand.names.oop} vs ${hand.names.ip} · ${hand.solution === "exploit" ? "against your locks" : "GTO"}`,
-    leak: { street, type: postflopType(node, hand.steps) },
+    title: `${hand.names.oop} vs ${hand.names.ip} · ${againstText(hand)}`,
+    leak: { street, type: postflopType(node, hand.steps), ...(hand.typed && node.player !== hand.typed.player ? { vs: hand.typed.id } : {}) },
     actions: node.actions.map((a) => ({ text: actionText(a), color: actionColor(a, node.actions) })),
     freq: row.slice(1, 1 + k), ev: row.slice(1 + k, 1 + 2 * k),
+    gtoFreq: gtoRow === undefined ? undefined : gtoRow ? gtoRow.slice(1, 1 + k) : null,
     evNote: "EV is what the hand expects to win from here in bb, counting the chips already in the pot.",
     pot: node.pot_bb, toCall: node.to_call_bb, combo: hand.combos[node.player], board: node.board,
     startBoard: hand.status.board,
@@ -1208,9 +1396,11 @@ function renderResult(q) {
   const best = q.ev[q.bestIndex];
   const sign = q.src === "preflop";
   const evText = (x) => `${sign && x >= 0 ? "+" : ""}${x.toFixed(2)}bb`;
+  const gto = q.gtoFreq !== undefined;
   const rows = q.actions.map((a, i) => `<tr class="${i === choice ? "chosen" : ""}">
       <td><i style="background:${a.color}"></i>${esc(a.text)}</td>
       <td><div class="mini"><span style="width:${q.freq[i] * 100}%;background:${a.color}"></span></div>${pct(q.freq[i])}</td>
+      ${gto ? `<td class="gtocol">${q.gtoFreq ? pct(q.gtoFreq[i]) : "–"}</td>` : ""}
       <td class="${i === q.bestIndex ? "best" : ""}">${evText(q.ev[i])}</td>
       <td>${(best - q.ev[i]).toFixed(2)}</td></tr>`).join("");
   let why = "";
@@ -1231,9 +1421,10 @@ function renderResult(q) {
   ui.root.querySelector("#dr-result").innerHTML = `
     <div class="verdict ${g.cls}"><b>${g.label}</b> · EV lost ${lossBb.toFixed(2)}bb (${lossPct.toFixed(1)}% of pot). ${why}</div>
     <table class="combos result">
-      <thead><tr><th>Action</th><th>Solver frequency</th><th>EV</th><th>Loss</th></tr></thead>
+      <thead><tr><th>Action</th><th>${gto ? "Exploit" : "Solver frequency"}</th>${gto ? "<th>GTO</th>" : ""}<th>EV</th><th>Loss</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    ${gtoNote(q)}
     ${q.goesOnWith ? `<p class="meta">The solver never plays this hand that way here, so it has no strategy for you after it.
       The hand goes on as if you'd ${actVerb(q.goesOnWith, true)}.</p>` : ""}
     <p class="hint">${q.evNote} Loss is the gap to the best action.</p>
@@ -1254,6 +1445,18 @@ function renderResult(q) {
     if (det.open) renderRange(q);
   };
   if (ui.rangeOpen) renderRange(q);
+}
+
+/** Against locks or a player type: how the best play differs from GTO with this hand. */
+function gtoNote(q) {
+  if (q.gtoFreq === undefined) return "";
+  if (!q.gtoFreq) return `<p class="vsgto">GTO never has this hand here: it plays it differently earlier in the hand.</p>`;
+  const gap = q.freq.reduce((s, f, i) => s + Math.abs(f - q.gtoFreq[i]), 0) / 2;
+  if (gap < 0.2) return `<p class="vsgto">GTO plays this hand about the same way here.</p>`;
+  const mix = (f) => q.actions.map((a, i) => [a.text, f[i]]).filter(([, x]) => x >= 0.05).sort((a, b) => b[1] - a[1])
+    .map(([t, x]) => `${esc(t)} ${pct(x)}`).join(", ");
+  const vs = q.hand.typed ? esc(types.typeNoun(q.hand.typed)) : "your locks";
+  return `<p class="vsgto">Exploiting ${vs} changes this hand: ${mix(q.freq)}, where GTO plays ${mix(q.gtoFreq)}.</p>`;
 }
 
 /** "Call 40%, Raise to 16.2 10%": the other actions the solver mixes in. */
@@ -1304,9 +1507,13 @@ function renderRange(q) {
   view.focus = handClass(q.combo);
   view.pinned = true;
   body.querySelectorAll("#dr-rmode button").forEach((b) => b.classList.toggle("active", b.dataset.mode === view.mode));
+  // Against locks or a player type, the hand detail also shows the class in the GTO solve.
+  const compare = q.hand?.solution === "exploit" && q.node.compare?.solution === "gto"
+    ? { label: "GTO", node: { ...q.node, hands: q.node.compare.hands }, note: "The GTO row is the whole class in the GTO solve." }
+    : null;
   const draw = () => renderNodeView(
     { grid: body.querySelector("#dr-grid"), detail: body.querySelector("#dr-cell"), range: body.querySelector("#dr-rnote") },
-    q.node, view, { board: q.board, name: (p) => esc(q.names[p]) },
+    q.node, view, { board: q.board, name: (p) => esc(q.names[p]), compare },
   );
   wireModeTabs(body.querySelector("#dr-rmode"), view, draw);
   draw();
@@ -1433,7 +1640,10 @@ function renderStats() {
 
 function leakKey(e) {
   if (e.src === "preflop") return { id: `pre|${e.cat}|${e.seat}`, label: `${PF_CAT[e.cat]}, ${pf.SEATS[e.seat]}` };
-  return { id: `post|${e.street}|${e.type}`, label: `${cap(e.street)}, ${POST_TYPES[e.type]}` };
+  // Hands against a player type get their own rows: the best play there isn't GTO's.
+  const vs = e.vs ? `|${e.vs}` : "";
+  const name = e.vs ? ` · vs ${types.profileById(e.vs)?.name || e.vs}` : "";
+  return { id: `post|${e.street}|${e.type}${vs}`, label: `${cap(e.street)}, ${POST_TYPES[e.type]}${name}` };
 }
 
 function leakRows(entries) {
@@ -1486,10 +1696,13 @@ function renderSide() {
 
 /** Sets up the drill for one situation from the leak report. */
 function drillLeak(id) {
-  const [kind, a, b] = id.split("|");
+  const [kind, a, b, vs] = id.split("|");
   if (kind === "pre") {
     settings.source = "preflop";
     Object.assign(settings.preflop, { cats: [a], seat: pf.SEATS[+b], line: null });
+  } else if (vs) {
+    settings.source = "live";
+    Object.assign(settings.live, { streets: [a], only: null, opponent: types.profileById(vs) ? vs : "exploit" });
   } else if (a === "flop") {
     settings.source = "flops";
     const map = { first: ["oop", "first"], checked: ["ip", "first"], bet: ["both", "facing"], raise: ["both", "facing"] };
