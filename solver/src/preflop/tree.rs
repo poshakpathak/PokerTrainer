@@ -49,14 +49,16 @@ pub struct Config {
     pub allin_spr: f64,
     /// Whether a player who hasn't put money in voluntarily may call a 3-bet (cold call).
     pub cold_call_3bet: bool,
-    /// At most this many players see the flop (2 or 3). Pots that were 3-bet are always
-    /// heads-up.
+    /// At most this many players see the flop (2 or 3). Three players can always get all-in.
     pub max_flop_players: u8,
     /// Rake taken from pots that see a flop ("no flop, no drop").
     pub rake: Rake,
     /// "calibrated" (pot share from equity, position and playability, fit to postflop solves)
     /// or "equity" (every pot is shared by raw all-in equity).
     pub postflop: String,
+    /// The first seat to act ("UTG" to "SB"); the seats before it have folded. "SB" solves
+    /// blind against blind.
+    pub start_seat: String,
 }
 
 impl Default for Config {
@@ -79,6 +81,7 @@ impl Default for Config {
             max_flop_players: 3,
             rake: Rake::default(),
             postflop: "calibrated".into(),
+            start_seat: "UTG".into(),
         }
     }
 }
@@ -105,7 +108,13 @@ impl Config {
         check((2..=3).contains(&self.max_flop_players), "At most 2 or 3 players can see the flop.")?;
         check((0.0..=0.2).contains(&self.rake.rate) && self.rake.cap_bb >= 0.0, "Rake must be 0 to 20% with a cap of 0 or more.")?;
         check(self.postflop == "calibrated" || self.postflop == "equity", "postflop must be \"calibrated\" or \"equity\".")?;
+        check(self.first_seat().is_some(), "start_seat must be UTG, HJ, CO, BTN or SB.")?;
         Ok(())
+    }
+
+    /// The index of `start_seat`.
+    pub fn first_seat(&self) -> Option<usize> {
+        SEATS[..=SB].iter().position(|&s| s.eq_ignore_ascii_case(&self.start_seat))
     }
 }
 
@@ -279,11 +288,12 @@ impl Builder<'_> {
             let matched = (0..6).filter(|&p| !st.folded[p] && (st.invested[p] - st.bet).abs() < 1e-9).count();
             let can_call = if st.level == 0 {
                 seat == SB && cfg.sb_limp
+            } else if st.bet >= stack - 1e-9 {
+                // Against an all-in calling is the only way to go on, so anyone may, up to a
+                // three-way pot.
+                matched < 3
             } else {
-                // Three-way pots only in single-raised pots: facing a 3-bet or more, at most two
-                // players go on.
-                let max = if st.level >= 2 { 2 } else { cfg.max_flop_players as usize };
-                (st.level < 2 || st.voluntary[seat] || cfg.cold_call_3bet) && matched < max
+                (st.level < 2 || st.voluntary[seat] || cfg.cold_call_3bet) && matched < cfg.max_flop_players as usize
             };
             if can_call {
                 out.push(Action { kind: ActKind::Call, to: st.bet.min(stack) });
@@ -378,6 +388,8 @@ impl Builder<'_> {
             self.showdowns.push(Showdown { node: id, players, pot, rake, spr, aggressor: st.aggressor });
             return id;
         };
+        // A player who can only fold (when three are already all-in) still gets a decision
+        // node with that one action, so every fold is seen where it happens.
         let actions = self.actions(&st, seat);
         let slot = self.slots;
         self.slots += actions.len() * super::cards::NUM_CLASSES;
@@ -399,11 +411,12 @@ impl Tree {
         let mut invested = [0.0; 6];
         invested[SB] = 0.5;
         invested[BB] = 1.0;
+        let first = config.first_seat().unwrap_or(0);
         let st = State {
             invested,
-            folded: [false; 6],
+            folded: std::array::from_fn(|s| s < first),
             allin: [false; 6],
-            pending: [true; 6],
+            pending: std::array::from_fn(|s| s >= first),
             voluntary: [false; 6],
             bet: 1.0,
             last_raise: 1.0,
@@ -412,8 +425,13 @@ impl Tree {
             callers: 0,
             limped: false,
         };
-        b.build(st, BB, u32::MAX);
+        b.build(st, (first + 5) % 6, u32::MAX);
         Ok(Tree { config: config.clone(), nodes: b.nodes, showdowns: b.showdowns, slots: b.slots })
+    }
+
+    /// The seats dealt into the hand (all six unless `start_seat` skips some).
+    pub fn players(&self) -> Vec<usize> {
+        self.nodes[0].active()
     }
 
     pub fn decisions(&self) -> usize {
@@ -498,5 +516,18 @@ mod tests {
         assert!(tree.showdowns.iter().all(|s| s.players.len() <= 3));
         assert_eq!(tree.history(fourbet), vec![0, 0, 0, 1, 0, 2, 2]);
         assert_eq!(tree.walk(&[0, 0, 0, 1, 0, 2, 2]).unwrap(), fourbet);
+    }
+
+    #[test]
+    fn blind_vs_blind() {
+        let cfg = Config { start_seat: "SB".into(), stack_bb: 10.0, sb_open_bb: 10.0, ..Config::default() };
+        let tree = Tree::build(&cfg).unwrap();
+        assert_eq!(tree.players(), vec![SB, BB]);
+        let root = &tree.nodes[0];
+        assert_eq!(root.seat, SB);
+        let acts: Vec<ActKind> = root.actions.iter().map(|a| a.kind).collect();
+        assert_eq!(acts, vec![ActKind::Fold, ActKind::AllIn]);
+        assert_eq!(tree.decisions(), 2);
+        assert!(Tree::build(&Config { start_seat: "BB".into(), ..Config::default() }).is_err());
     }
 }

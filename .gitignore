@@ -1,3 +1,4 @@
 solver/target/
 __pycache__/
 .DS_Store
+solver/cache/

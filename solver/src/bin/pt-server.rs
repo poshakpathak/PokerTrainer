@@ -17,6 +17,10 @@
 //!   POST /api/locks/add     {history, solution, targets, hands, order, wild, keep_path, label, crumbs}
 //!   POST /api/locks/remove  {id}
 //!   POST /api/locks/clear
+//!   POST /api/preflop/solve     {config, max_iters, target_mbb}  start a 6-max preflop solve
+//!   GET  /api/preflop/status    its progress
+//!   POST /api/preflop/stop      stop early and keep the current strategy
+//!   GET  /api/preflop/solution  the finished solve, in the format of web/data/preflop/*.json
 //!
 //! `history` lists action indexes for decision nodes and card ids (0-51) for chance nodes,
 //! the same as postflop-solver's `apply_history`. `solution` is "gto" (the last solve without
@@ -25,6 +29,7 @@
 
 use postflop_solver::*;
 use pt_solver::locks::{self, LockedNode, Recipe};
+use pt_solver::preflop::{equity::default_cache_path, service::Service as PreflopService};
 use pt_solver::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -350,6 +355,7 @@ struct App {
     /// The kind of solve the worker is (or was last) filling.
     worker_kind: Kind,
     locks: LockSet,
+    preflop: PreflopService,
 }
 
 type ApiResult = Result<Value, (u16, String)>;
@@ -810,8 +816,22 @@ impl App {
             let _ = req.respond(json_response(400, json!({ "error": "unreadable body" })));
             return;
         }
+        if (&method, url.as_str()) == (&Method::Get, "/api/preflop/solution") {
+            // Already JSON text, and a few MB: sent as it is.
+            let resp = match self.preflop.solution() {
+                Ok(text) => Response::from_data(text.as_bytes().to_vec())
+                    .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
+                    .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap()),
+                Err((code, msg)) => json_response(code, json!({ "error": msg })),
+            };
+            let _ = req.respond(resp);
+            return;
+        }
         let result = match (&method, url.as_str()) {
             (Method::Get, "/api/status") => Ok(self.status_json()),
+            (Method::Post, "/api/preflop/solve") => self.preflop.start(&body),
+            (Method::Get, "/api/preflop/status") => Ok(self.preflop.status()),
+            (Method::Post, "/api/preflop/stop") => self.preflop.stop(),
             (Method::Post, "/api/solve") => self.start_solve(&body),
             (Method::Post, "/api/stop") => {
                 self.cancel.store(true, Ordering::SeqCst);
@@ -911,6 +931,7 @@ fn main() {
         worker: None,
         worker_kind: Kind::Gto,
         locks: LockSet::default(),
+        preflop: PreflopService::new(default_cache_path()),
     };
     for req in server.incoming_requests() {
         app.handle(req);

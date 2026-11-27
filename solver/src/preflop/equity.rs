@@ -272,6 +272,11 @@ fn load_raw(path: &Path) -> Option<Raw> {
     Some(Raw { eq2, eq3 })
 }
 
+/// Where the command-line tools and the server keep the tables: `solver/cache/`.
+pub fn default_cache_path() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("cache").join("preflop-equity.bin")
+}
+
 impl EquityTables {
     /// Loads the tables from `cache` (a file path), or computes and saves them. `progress`
     /// gets the share done while computing.
@@ -279,6 +284,9 @@ impl EquityTables {
         let raw = cache.and_then(load_raw).unwrap_or_else(|| {
             let raw = compute_raw(progress);
             if let Some(p) = cache {
+                if let Some(dir) = p.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
                 if let Err(e) = save_raw(p, &raw) {
                     eprintln!("couldn't cache the equity tables at {}: {e}", p.display());
                 }

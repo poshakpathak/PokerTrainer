@@ -1,0 +1,8 @@
+{
+  "packs": [
+    { "id": "100bb", "name": "100bb, no rake", "file": "100bb.json", "description": "100bb deep, no rake. 2.5bb opens (SB 3bb, raise or fold), 3-bets to 3x in position and 4x out of position, 4-bets to 2.2x and 2.5x, all-in from the 4-bet on." },
+    { "id": "100bb-rake", "name": "100bb, 5% rake", "file": "100bb-rake.json", "description": "100bb deep, 5% rake capped at 3bb (no flop, no drop). 2.5bb opens (SB 3bb, raise or fold), 3-bets to 3x in position and 4x out of position, 4-bets to 2.2x and 2.5x, all-in from the 4-bet on." },
+    { "id": "50bb-rake", "name": "50bb, 5% rake", "file": "50bb-rake.json", "description": "50bb deep, 5% rake capped at 3bb (no flop, no drop). 2.5bb opens (SB 3bb, raise or fold), 3-bets to 3x in position and 4x out of position, 4-bets to 2.2x and 2.5x, all-in from the 4-bet on." },
+    { "id": "200bb-rake", "name": "200bb, 5% rake", "file": "200bb-rake.json", "description": "200bb deep, 5% rake capped at 3bb (no flop, no drop). 2.5bb opens (SB 3bb, raise or fold), 3-bets to 3x in position and 4x out of position, 4-bets to 2.2x and 2.5x, all-in from the 4-bet on." }
+  ]
+}
