@@ -22,6 +22,7 @@ const state = {
   server: null, // the server's preflop status, or null without a server
   polling: null,
   onOpenSolver: null,
+  onDrill: null,
 };
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -47,8 +48,9 @@ async function api(path, body) {
   return data;
 }
 
-export async function initPreflopSolver(root, { onOpenSolver }) {
+export async function initPreflopSolver(root, { onOpenSolver, onDrill }) {
   state.onOpenSolver = onOpenSolver;
+  state.onDrill = onDrill;
   const index = await fetch("data/preflop/index.json").then((r) => (r.ok ? r.json() : { packs: [] })).catch(() => ({ packs: [] }));
   state.packs = index.packs || [];
   state.server = await api("status").catch(() => null);
@@ -90,6 +92,20 @@ export async function initPreflopSolver(root, { onOpenSolver }) {
   if (first) await loadSource(root, first, saved?.source === first ? saved.history : []);
   else root.querySelector("#pf-main").innerHTML = `<p class="hint">No preflop solutions found in <code>data/preflop/</code>.${state.server ? " Set one up under New solve." : ""}</p>`;
   if (state.server && ["tables", "solving"].includes(state.server.state)) handleStatus(root, state.server);
+}
+
+/** Shows one decision of a chart (`source` is a pack id or "server"), with hand class `cls` pinned. */
+export async function openPreflopAt(root, source, history, cls) {
+  if (!root.querySelector("#pf-source")) return;
+  if (source === "server") state.server = await api("status").catch(() => state.server);
+  if (source !== "server" && !state.packs.some((p) => p.id === source)) return;
+  if (source === "server" && !state.server?.has_solution) return;
+  if (cls) {
+    state.focus = cls;
+    state.pinned = true;
+  }
+  renderSources(root, source);
+  await loadSource(root, source, history);
 }
 
 function renderSources(root, selected) {
@@ -258,11 +274,15 @@ function renderDecision(root) {
       plays ${pct(rangeCombos(reach[node.s]) / 1326)} of hands here</p>
     <div class="freqbar">${node.a.map((a, i) => `<span style="width:${freq[i] * 100}%;background:${actionColor(node.a, i)}"></span>`).join("")}</div>
     <div class="actions">${node.a.map((a, i) => `<button data-i="${i}"><i style="background:${actionColor(node.a, i)}"></i>${
-      esc(stepLabel(i))}<em>${pct(freq[i])}</em></button>`).join("")}</div>`;
+      esc(stepLabel(i))}<em>${pct(freq[i])}</em></button>`).join("")}</div>
+    ${state.onDrill ? `<div class="drillbar"><button class="secondary" id="pf-drill">Drill this spot</button>
+      <span class="meta">Deals you hands here and scores your answers.</span></div>` : ""}`;
   root.querySelector("#pf-here .actions").onclick = (e) => {
     const i = e.target.closest("button")?.dataset.i;
     if (i !== undefined) go(root, [...state.history, +i]);
   };
+  const drillBtn = root.querySelector("#pf-drill");
+  if (drillBtn) drillBtn.onclick = () => state.onDrill({ preflop: { pack: state.source, history: state.history.slice() } });
   root.querySelector("#pf-body").innerHTML = `
     <div class="tabs" id="pf-mode">
       <button data-mode="strategy">Strategy</button><button data-mode="ev">EV</button>
