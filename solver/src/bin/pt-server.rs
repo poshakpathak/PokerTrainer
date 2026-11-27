@@ -568,8 +568,8 @@ impl App {
         }
         let actors = actors_json(&actors);
 
-        let street_bets = game.total_bet_amount();
-        let pot = solved.starting_pot + street_bets[0] + street_bets[1];
+        let total = game.total_bet_amount();
+        let pot = solved.starting_pot + total[0] + total[1];
 
         if game.is_terminal_node() {
             return Ok(json!({ "type": "terminal", "solution": kind.name(), "board": board, "pot_bb": bb(pot), "actors": actors }));
@@ -589,8 +589,8 @@ impl App {
                 if !game.is_terminal_node() && !game.is_chance_node() {
                     game.cache_normalized_weights();
                     let player = game.current_player();
-                    let street = game.total_bet_amount();
-                    let p = solved.starting_pot + street[0] + street[1];
+                    let total = game.total_bet_amount();
+                    let p = solved.starting_pot + total[0] + total[1];
                     let mut eq = [0.0; 2];
                     for pl in 0..2 {
                         eq[pl] = round(compute_average(&game.equity(pl), game.normalized_weights(pl)) as f64, 4);
@@ -599,7 +599,8 @@ impl App {
                     entry["actions"] = json!(game
                         .available_actions()
                         .iter()
-                        .map(|a| action_json(a, p, street, player))
+                        // The card starts a new street, so nobody has bet on it yet.
+                        .map(|a| action_json(a, p, [0, 0], player))
                         .collect::<Vec<_>>());
                     entry["freq"] = json!(range_frequencies(game));
                     entry["equity"] = json!(eq);
@@ -688,8 +689,9 @@ impl App {
             return Err(bad("Only a decision can be locked."));
         }
         let player = game.current_player();
-        let street_bets = game.total_bet_amount();
-        let pot = starting_pot + street_bets[0] + street_bets[1];
+        let total = game.total_bet_amount();
+        let pot = starting_pot + total[0] + total[1];
+        let street_bets = street_bets(game);
         let actions: Vec<Value> = game
             .available_actions()
             .iter()

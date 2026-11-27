@@ -82,7 +82,30 @@ pub fn round(x: f64, digits: i32) -> f64 {
     (x * m).round() / m
 }
 
+/// What each player has put in on the current street, in chips.
+///
+/// postflop-solver's `total_bet_amount` counts the whole hand, while the amounts in `Bet`, `Raise`
+/// and `AllIn` are for the current street. This replays the game's history to find what both
+/// players had in when the street began. It leaves the game at the same node, but with the
+/// normalized weights no longer cached.
+pub fn street_bets(game: &mut PostFlopGame) -> [i32; 2] {
+    let total = game.total_bet_amount();
+    let history = game.history().to_vec();
+    game.back_to_root();
+    let mut start = 0;
+    for &step in &history {
+        if game.is_chance_node() {
+            // Both players have put in the same amount when a street ends.
+            start = game.total_bet_amount()[0];
+        }
+        game.play(step);
+    }
+    [total[0] - start, total[1] - start]
+}
+
 /// Describes an action as JSON, with sizes in bb and as a fraction of the pot before the action.
+/// `pot_chips` is the whole pot; `street_bets` is what each player has put in on this street
+/// (see [`street_bets`]).
 pub fn action_json(action: &Action, pot_chips: i32, street_bets: [i32; 2], player: usize) -> Value {
     let to_call = (street_bets[player ^ 1] - street_bets[player]).max(0);
     let sized = |kind: &str, to: i32| {
@@ -182,11 +205,12 @@ pub fn range_frequencies(game: &PostFlopGame) -> Vec<f64> {
 /// `[reach, strategy..., ev..., equity]` (null when the hand doesn't reach this node).
 /// The game must be solved and positioned at a decision node.
 pub fn decision_node_json(game: &mut PostFlopGame, starting_pot: i32) -> Value {
+    let street_bets = street_bets(game);
     game.cache_normalized_weights();
 
     let player = game.current_player();
-    let street_bets = game.total_bet_amount();
-    let pot = starting_pot + street_bets[0] + street_bets[1];
+    let total = game.total_bet_amount();
+    let pot = starting_pot + total[0] + total[1];
     let actions = game.available_actions();
     let actions_json: Vec<Value> = actions
         .iter()
@@ -237,4 +261,52 @@ pub fn decision_node_json(game: &mut PostFlopGame, starting_pot: i32) -> Value {
         "ev_bb": range_ev,
         "hands": hands,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn street(bets: &str) -> StreetBets {
+        StreetBets { oop: bets.into(), ip: bets.into(), raise: String::new(), donk: None }
+    }
+
+    /// Bets on a later street are sized against that street, not the whole hand.
+    #[test]
+    fn later_street_sizes_are_per_street() {
+        let spot = Spot {
+            id: String::new(),
+            pot_bb: 10.0,
+            stack_bb: 50.0,
+            ranges: Ranges { oop: "AA".into(), ip: "KK".into() },
+            bets: Bets { flop: street("50%"), turn: street("50%"), river: street("50%") },
+            rake: Rake::default(),
+        };
+        let (mut game, pot) = build_game(&spot, "Qs7d2c5h").unwrap();
+        game.allocate_memory(false);
+        solve(&mut game, 20, 0.0, false);
+
+        let kind = |node: &Value, t: &str| node["actions"].as_array().unwrap().iter().position(|a| a["type"] == t).unwrap();
+        // Turn: OOP bets half the pot (5bb) and IP calls.
+        let turn = decision_node_json(&mut game, pot);
+        assert_eq!(turn["actions"][kind(&turn, "bet")]["add_bb"], 5.0);
+        game.play(kind(&turn, "bet"));
+        let facing = decision_node_json(&mut game, pot);
+        game.play(kind(&facing, "call"));
+        game.play(card_from_str("9c").unwrap() as usize);
+
+        // River: the pot is 20bb, so half the pot is 10bb.
+        let river = decision_node_json(&mut game, pot);
+        assert_eq!(river["pot_bb"], 20.0);
+        assert_eq!(river["to_call_bb"], 0.0);
+        let bet = &river["actions"][kind(&river, "bet")];
+        assert_eq!((bet["add_bb"].as_f64(), bet["to_bb"].as_f64(), bet["pct"].as_i64()), (Some(10.0), Some(10.0), Some(50)));
+
+        game.play(kind(&river, "bet"));
+        let facing = decision_node_json(&mut game, pot);
+        assert_eq!(facing["to_call_bb"], 10.0);
+        assert_eq!(facing["actions"][kind(&facing, "call")]["add_bb"], 10.0);
+        // All-in is the 45bb left behind.
+        assert_eq!(facing["actions"][kind(&facing, "allin")]["add_bb"], 45.0);
+    }
 }
