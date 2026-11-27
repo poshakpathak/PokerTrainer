@@ -2,6 +2,7 @@
 //! from a spot and board, and turning solver nodes into JSON for the web app.
 
 pub mod locks;
+pub mod multiway;
 pub mod preflop;
 
 use postflop_solver::*;

@@ -22,6 +22,7 @@ const state = {
   server: null, // the server's preflop status, or null without a server
   polling: null,
   onOpenSolver: null,
+  onOpenMultiway: null,
   onDrill: null,
 };
 
@@ -48,8 +49,9 @@ async function api(path, body) {
   return data;
 }
 
-export async function initPreflopSolver(root, { onOpenSolver, onDrill }) {
+export async function initPreflopSolver(root, { onOpenSolver, onOpenMultiway, onDrill }) {
   state.onOpenSolver = onOpenSolver;
+  state.onOpenMultiway = onOpenMultiway;
   state.onDrill = onDrill;
   const index = await fetch("data/preflop/index.json").then((r) => (r.ok ? r.json() : { packs: [] })).catch(() => ({ packs: [] }));
   state.packs = index.packs || [];
@@ -408,13 +410,31 @@ function renderFlop(root) {
   root.querySelectorAll(".pf-flopgrid").forEach((el) => renderRangeGrid(el, reach[+el.dataset.seat]));
 
   const canSolve = players.length === 2 && !allin;
+  const canSolve3 = players.length === 3 && !allin && state.onOpenMultiway;
   const detail = root.querySelector("#pf-detail");
   detail.innerHTML = `
     <h3>Play the flop</h3>
     ${canSolve ? `<p class="hint">Open this pot in the postflop Solver with these ranges, the pot, the stacks and the rake. Pick a board there and solve.</p>
       <button class="primary" id="pf-open">Open in postflop Solver</button>`
+      : canSolve3 ? `<p class="hint">Open this three-way pot in the Multiway solver with these ranges, the pot, the stacks and the rake. Pick a board there and solve.</p>
+      <button class="primary" id="pf-open3">Open in Multiway solver</button>`
       : `<p class="hint">${allin ? "Everyone is all-in, so there's nothing left to play: equity decides." : "The postflop Solver plays heads-up pots only."}</p>`}
     ${players.map((s) => `<label>${SEATS[s]}'s range <textarea rows="4" readonly>${rangeString(reach[s])}</textarea></label>`).join("")}`;
+  if (canSolve3) {
+    detail.querySelector("#pf-open3").onclick = () => {
+      const raiser = line.filter((s) => s.kind === "raise" || s.kind === "allin").pop()?.seat;
+      state.onOpenMultiway({
+        players: players.map((s) => SEATS[s]),
+        ranges: players.map((s) => rangeString(reach[s])),
+        pot_bb: Math.round(node.pot * 100) / 100,
+        stack_bb: Math.round(stack * 100) / 100,
+        rake: state.pack.config.rake,
+        pot_type: kind === 0 ? "limp" : kind === 1 ? "srp" : "3bp",
+        opener: raiser === undefined ? null : players.indexOf(raiser),
+        description: lineText(line),
+      });
+    };
+  }
   if (canSolve) {
     detail.querySelector("#pf-open").onclick = () => {
       const [oop, ip] = players;

@@ -333,6 +333,12 @@ table.evtable { margin: 2px 0 14px; }
 table.evtable td:last-child, table.evtable th:last-child { text-align: right; }
 .pfsolver .detail textarea { font-size: 11px; }
 
+/* Multiway solver */
+table.players { margin-bottom: 12px; }
+table.players td small { display: inline; }
+table.players tr.acting td { background: var(--bg); }
+table.players tr.folded td { color: var(--muted); }
+
 /* Drill */
 .drillseats { max-width: 520px; margin: 10px auto 4px; }
 .drillseats .seat { cursor: default; }
