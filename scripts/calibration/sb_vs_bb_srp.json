@@ -1,0 +1,18 @@
+{
+  "id": "sb_vs_bb_srp",
+  "name": "SB vs BB, single-raised pot",
+  "description": "SB opens 3bb, BB calls. 100bb deep, no rake. Used to fit the preflop solver's postflop model (the caller is in position, with a wide range).",
+  "oop": "SB",
+  "ip": "BB",
+  "pot_bb": 6,
+  "stack_bb": 97,
+  "ranges": {
+    "oop": "22+,A2s+,K2s+,Q4s+,J6s+,T6s+,96s+,85s+,75s+,64s+,54s,A2o+,K7o+,Q8o+,J8o+,T8o+,98o",
+    "ip": "99-22,AJs-A6s,A4s-A2s,KJs-K2s,QJs-Q2s,JTs-J4s,T9s-T6s,98s-96s,87s-85s,76s-74s,65s-63s,54s-53s,43s,AJo-A2o,KJo-K5o,QJo-Q7o,JTo-J7o,T9o-T7o,98o-97o,87o,76o,65o"
+  },
+  "bets": {
+    "flop": { "oop": "33%, 75%", "ip": "33%, 75%", "raise": "3x" },
+    "turn": { "oop": "66%", "ip": "66%", "raise": "" },
+    "river": { "oop": "75%", "ip": "75%", "raise": "" }
+  }
+}

@@ -80,6 +80,7 @@ cargo run --release --bin pt-server</code></pre>
   }
 
   const index = await loadIndex().catch(() => ({ spots: [] }));
+  state.index = index;
   root.innerHTML = `
     <div class="study solver">
       <aside class="panel controls">
@@ -133,6 +134,34 @@ cargo run --release --bin pt-server</code></pre>
     fillForm(root, index.spots[0], index.spots[0].flops[0]?.flop || "Ks7d2c");
   }
   handleStatus(root, status);
+}
+
+/**
+ * Fills the setup with a pot from the preflop solver: its ranges, pot, stacks and rake, and the
+ * bet sizes of a library spot of the same kind (single-raised or 3-bet pot). The board is left
+ * for you to pick.
+ */
+export function prefillSolver(root, spot) {
+  const sel = root.querySelector("#sv-preset");
+  if (!sel) return; // no server: the tab shows how to start it
+  const lib = state.index?.spots || [];
+  const like = lib.find((s) => s.id.endsWith(`_${spot.pot_type}`)) || lib[0];
+  const bets = like?.bets || { flop: { oop: "33%, 75%", ip: "33%, 75%", raise: "3x" }, turn: { oop: "66%", ip: "66%", raise: "" }, river: { oop: "75%", ip: "75%", raise: "" } };
+  let opt = sel.querySelector('option[value="__preflop"]');
+  if (!opt) {
+    opt = document.createElement("option");
+    opt.value = "__preflop";
+    sel.prepend(opt);
+  }
+  opt.textContent = `Preflop solver: ${spot.description}`;
+  sel.value = "__preflop";
+  fillForm(root, { ...spot, bets });
+  root.querySelector("#sv-setup").open = true;
+  root.querySelector("#sv-progress").innerHTML = `<p class="meta">Ranges, pot and stacks from the preflop solver (${esc(spot.description)}). Bet sizes from ${
+    esc(like?.name || "the defaults")}. Pick a board and press Solve.</p>`;
+  const board = root.querySelector("#sv-board");
+  board.focus();
+  board.select();
 }
 
 function fillForm(root, spot, board) {

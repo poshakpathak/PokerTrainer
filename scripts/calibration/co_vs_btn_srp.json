@@ -1,0 +1,18 @@
+{
+  "id": "co_vs_btn_srp",
+  "name": "CO vs BTN, single-raised pot",
+  "description": "CO opens 2.5bb, BTN calls, the blinds fold. 100bb deep, no rake. Used to fit the preflop solver's postflop model (the caller is in position).",
+  "oop": "CO",
+  "ip": "BTN",
+  "pot_bb": 6.5,
+  "stack_bb": 97.5,
+  "ranges": {
+    "oop": "22+,A2s+,K5s+,Q8s+,J8s+,T8s+,97s+,86s+,75s+,65s,54s,ATo+,KJo+,QJo",
+    "ip": "JJ-22,AQs-A6s,KQs-K9s,QJs-Q9s,JTs-J9s,T9s-T8s,98s,87s,76s,65s,54s,AQo-AJo,KQo"
+  },
+  "bets": {
+    "flop": { "oop": "33%, 75%", "ip": "33%, 75%", "raise": "3x" },
+    "turn": { "oop": "66%", "ip": "66%", "raise": "" },
+    "river": { "oop": "75%", "ip": "75%", "raise": "" }
+  }
+}

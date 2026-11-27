@@ -6,7 +6,8 @@ It has three parts:
 
 1. **Solver engine** (`solver/`): a small Rust CLI built on the open-source
    [postflop-solver](https://github.com/b-inary/postflop-solver). It solves one flop for one
-   spot and exports every flop decision (strategy and EV for every combo) as JSON.
+   spot and exports every flop decision (strategy and EV for every combo) as JSON. It also
+   has its own 6-max preflop solver (see [Preflop solver](#preflop-solver)).
 2. **Solution library** (`spots/`, `flops/`, `scripts/build_library.py`, `web/data/`): spot
    definitions (preflop ranges, pot, stacks, bet sizes) and a script that batch-solves spots ×
    flops into `web/data/`.
@@ -15,8 +16,8 @@ It has three parts:
      scores you by EV lost against the solver. Hands you get wrong are saved, and
      **Review mistakes** mode replays them until you answer them correctly. Stats are kept in
      your browser.
-   - **Preflop** drills open-or-fold decisions from every seat against the opening charts in
-     `web/data/preflop.json`, focusing on hands near the edge of each range.
+   - **Preflop drill** drills open-or-fold decisions from every seat against the opening charts
+     in `web/data/preflop.json`, focusing on hands near the edge of each range.
    - **Study** is a strategy browser: the 13×13 grid shows each hand class's action mix (or
      its EV or equity), you can step through the action tree, and hovering a cell shows every
      combo's frequencies, EVs and equity. Each node also shows both ranges' equity, EV and
@@ -24,8 +25,12 @@ It has three parts:
    - **Reports** compares one decision (e.g. the c-bet after a check) across every solved flop,
      sortable by action frequency and filterable by texture, so you can learn the patterns
      instead of memorizing single boards.
-   - **Solver** solves any spot you set up (ranges, board, pot, stacks, bet sizes, rake) on your
-     own machine and lets you browse the whole tree: flop, turn and river, on any turn or river
+   - **Preflop solver** shows GTO preflop ranges for 6-max cash games: every seat's opens,
+     3-bets, 4-bets and calls as 13×13 grids, with the EV of every hand and action. Browse the
+     bundled charts, or solve your own stack depth, bet sizes and rake with the local server.
+     Any heads-up pot it reaches opens in the Postflop solver with both ranges filled in.
+   - **Postflop solver** solves any spot you set up (ranges, board, pot, stacks, bet sizes,
+     rake) on your own machine and lets you browse the whole tree: flop, turn and river, on any turn or river
      card, with a report of the strategy on every card. You can also **lock** how a player plays
      at any decision (see [Node locking](#node-locking)) and solve again to find the best
      exploit, side by side with GTO. Needs the local server below.
@@ -33,7 +38,7 @@ It has three parts:
 
 ## Run it
 
-With the solver server (everything, including the Solver tab):
+With the solver server (everything, including both solvers):
 
 ```sh
 cd solver
@@ -45,7 +50,8 @@ Options: `--port 8080`, `--threads N`, `--max-memory-gb 8` (solves whose tree ne
 than this are refused instead of swapping your machine to death), `--web <path to web/>`.
 The server only listens on 127.0.0.1.
 
-Without Rust, everything except the Solver tab works from any static file server:
+Without Rust, everything except solving works from any static file server (the Preflop solver
+tab still shows the bundled charts):
 
 ```sh
 cd web
@@ -63,7 +69,7 @@ at a decision, solve again, and the solver finds the best way to exploit it. Use
 reads on real players (overfolds to river bets, never raises the turn, always c-bets) into a
 strategy.
 
-1. Solve a spot in the Solver tab and click through to the decision, e.g. BB facing a river bet.
+1. Solve a spot in the Postflop solver tab and click through to the decision, e.g. BB facing a river bet.
 2. Click **Lock BB's play here** and set how often BB takes each action, e.g. fold 70%. You
    pick which hands switch first: the ones that lose the least EV doing so (the default),
    the weakest, or the strongest. You can also **paint** hands in the grid to fix them to one
@@ -84,6 +90,89 @@ hand, every action shows its frequency in the other solution, and the hand detai
 other solution's row for the hovered hand class. Locks belong to the spot and board they were
 made on: solving a different spot clears them, and they're kept in the server's memory, so
 restarting pt-server clears them too. Both solutions have to fit under `--max-memory-gb`.
+
+## Preflop solver
+
+The **Preflop solver** tab shows a whole 6-max preflop solution: for every seat and every line
+(opens, 3-bets, squeezes, 4-bets, all-ins, cold calls), how each of the 169 hand classes plays
+and what each action is worth. Pick a chart under **Solution**, then click actions to play the
+hand out. The seat strip shows who's still in (click a seat to see its range at that point),
+**Jump to** goes straight to every open, every answer to an open and every answer to a 3-bet,
+and the **EV** tab colors the grid by each hand's EV instead of its strategy. When the hand
+reaches a flop you get every player's range, and a heads-up pot that isn't all-in has
+**Open in postflop Solver**, which fills in the Postflop solver's ranges, pot, stacks and rake
+(and bet sizes from the matching bundled spot) so you only pick a board.
+
+The bundled charts in `web/data/preflop/` all use 2.5bb opens (3bb from the SB, which raises
+or folds), 3-bets to 3x the open in position and 4x out of position (plus one open per caller
+when squeezing), 4-bets to 2.2x in position and 2.5x out, and all-in as an option from the
+4-bet on:
+
+| Chart | Stacks | Rake |
+| --- | --- | --- |
+| 100bb, no rake | 100bb | none |
+| 100bb, rake | 100bb | 5%, capped at 3bb |
+| 50bb, rake | 50bb | 5%, capped at 3bb |
+| 200bb, rake | 200bb | 5%, capped at 3bb |
+
+To solve other settings, run pt-server and use **New solve** in the tab, or the command line:
+
+```sh
+cd solver
+cargo run --release --bin pt-preflop -- --set stack_bb=60 --set rake.rate=0.05 --set rake.cap_bb=3 \
+  --out ../web/data/preflop/60bb.json --summary
+```
+
+`--set` changes any setting below (`rake.rate` style for nested ones) and `--config file.json`
+reads several at once. `--summary` prints every seat's opening range and the answers to it;
+add the file to `web/data/preflop/index.json` to list it in the tab. `--iters` and `--target`
+(in mbb per hand) say when to stop. The first run builds the all-in equity tables (heads-up and
+three-way, about 30 seconds on 4 cores) and caches them in `solver/cache/`; after that a 100bb
+solve takes under a minute.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `stack_bb` | 100 | everyone's stack, in bb (5 to 400) |
+| `open_bb`, `sb_open_bb` | 2.5, 3 | the open size, and from the SB |
+| `sb_limp`, `iso_bb` | false, 3.5 | whether the SB may limp, and the BB's raise over a limp |
+| `threebet_ip`, `threebet_oop` | 3, 4 | 3-bet size as a multiple of the open, in and out of position |
+| `squeeze_per_caller` | 1 | opens added to a 3-bet for each caller |
+| `fourbet_ip`, `fourbet_oop`, `fivebet` | 2.2, 2.5, 2.2 | later raises, as a multiple of the raise before |
+| `allin_from` | 3 | the raise from which all-in is always an option: 1 the open, 2 the 3-bet, 3 the 4-bet, 4 the 5-bet |
+| `allin_spr` | 1 | a raise that would leave less than this stack-to-pot ratio behind is an all-in instead |
+| `cold_call_3bet` | false | whether a player who hasn't put money in yet may call a 3-bet |
+| `max_flop_players` | 3 | how many players may see a flop (2 or 3) |
+| `rake` | none | e.g. `{"rate": 0.05, "cap_bb": 3}`, taken from pots that see a flop |
+| `postflop` | `calibrated` | how pots that see a flop are shared (below), or `equity` for raw all-in equity |
+| `start_seat` | `UTG` | the first seat to act; the seats before it fold, so `SB` solves blind against blind |
+
+### How it works
+
+- **Tree.** Every player can fold, call or make one raise of the set size at each level, plus
+  all-in where it's allowed. Only the SB can limp. At 100bb that's about 2,700 decisions.
+- **Solving.** Discounted CFR updates all 169 hand classes of a seat at once, on every core.
+  Exploitability, how much the seats would win on average by best-responding to the solution,
+  is computed exactly; the bundled charts are at about 0.1 mbb (a ten-thousandth of a bb) per
+  hand.
+- **Cards.** Your hand removes cards from every other player's range. Between two other
+  players hands are treated as independent, except in three-way all-ins, which use exact
+  three-way equity.
+- **After the flop.** A preflop solver can't play the flop, so a hand's share of the pot when
+  it sees one comes from a model fit to this repo's own postflop solves. Per matchup, with
+  `x = equity - 1/2`:
+
+  ```text
+  share = 1/2 + alpha * x + cubic * x^3 ± position ± initiative + play(you) - play(opponent)
+  ```
+
+  Close matchups end up nearer to even than their equity, hands that dominate win more than
+  theirs, the player in position gets about 5% of the pot from the one out of position, the
+  preflop raiser gets a little more (much more in 3-bet pots), and pairs and suited hands play
+  better than offsuit ones. The model is fit separately for single-raised and 3-bet pots and
+  slides toward raw equity as the stack-to-pot ratio gets smaller; three-way pots use
+  three-way equity with two thirds of the position and playability terms. The numbers are in
+  `solver/src/preflop/model.rs`; `scripts/fit_realization.py` refits them from the library and
+  the extra spots in `scripts/calibration/` (`run.sh` solves those).
 
 ## Solve more spots and flops
 
@@ -131,14 +220,21 @@ representative per texture.
   tighter solutions at the cost of time.
 - The trees are simplified (few bet sizes, no turn/river raises) so they solve on a laptop.
   Treat the output as a solid baseline, not the final word in every spot.
-- The precomputed library only exports flop decisions. Use the Solver tab to explore turns
-  and rivers.
-- The preflop ranges (both the spot ranges and the opening charts) are hand-written
+- The precomputed library only exports flop decisions. Use the Postflop solver tab to explore
+  turns and rivers.
+- The library's spot ranges and the Preflop drill's opening charts are hand-written
   approximations of 100bb 6-max ranges, not solver output.
+- The Preflop solver's charts are only as good as its postflop model: it values each hand from
+  a fit to postflop solves instead of playing the flop out, so expect them to differ from
+  full-game solvers by a few percent of hands at the edges of ranges. At 100bb without rake
+  it opens 16% of hands UTG, 20% HJ, 25% CO, 37% BTN and 40% SB, and the BB defends 56%
+  against a BTN open (41% calls, 15% 3-bets); next to published solver charts that's a little
+  tight on the BTN and SB. The tree also leaves out some lines: one raise size per level,
+  limps only from the SB, and at most three players see a flop.
 
 ## Solver API
 
-`pt-server` exposes a small JSON API the Solver tab uses; you can script against it too.
+`pt-server` exposes a small JSON API the two solver tabs use; you can script against it too.
 
 | Request | Body | Returns |
 | --- | --- | --- |
@@ -150,6 +246,10 @@ representative per texture.
 | `POST /api/locks/add` | `{history, solution, targets, hands, order, wild, keep_path, label}` | saves a lock (replacing one on the same decision) and returns all locks |
 | `POST /api/locks/remove` | `{id}` | removes a lock |
 | `POST /api/locks/clear` | | removes every lock |
+| `POST /api/preflop/solve` | `{config, max_iters, target_mbb}`; `config` takes the settings in [Preflop solver](#preflop-solver) | starts a preflop solve (replacing any current one) |
+| `GET /api/preflop/status` | | state (`tables` while building the equity tables), iteration, exploitability and its history, time |
+| `POST /api/preflop/stop` | | stops early and keeps the current strategy |
+| `GET /api/preflop/solution` | | the last preflop solve, in the same format as `web/data/preflop/*.json` |
 
 `history` lists action indexes at decision nodes and card ids (0 to 51, `4 * rank + suit` with
 2 = 0 and clubs, diamonds, hearts, spades = 0 to 3) at chance nodes. `solution` is `"gto"` or
@@ -163,7 +263,8 @@ also locks the same player's earlier decisions on the line as they are.
 
 ## Roadmap
 
-- Preflop solver, so the ranges going into each spot come from a solve instead of charts.
+- Rebuild the library's spots and the Preflop drill from the preflop solver's ranges.
+- Calibrate the preflop solver's postflop model on more spots and flops.
 - Aggregated turn and river reports across many flops.
 - Multiway pots.
 

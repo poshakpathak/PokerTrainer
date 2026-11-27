@@ -3,13 +3,15 @@ import { initTrainer } from "./trainer.js";
 import { initRanges } from "./ranges.js";
 import { initReports } from "./reports.js";
 import { initPreflop } from "./preflop.js";
-import { initSolver } from "./solver.js";
+import { initSolver, prefillSolver } from "./solver.js";
+import { initPreflopSolver } from "./pfsolver.js";
 
 const views = {
   study: document.getElementById("view-study"),
   trainer: document.getElementById("view-trainer"),
   preflop: document.getElementById("view-preflop"),
   reports: document.getElementById("view-reports"),
+  pfsolver: document.getElementById("view-pfsolver"),
   solver: document.getElementById("view-solver"),
   ranges: document.getElementById("view-ranges"),
 };
@@ -34,11 +36,18 @@ async function openStudy(spot, flop, path, cls) {
   await openInStudy(views.study, spot, flop, path, cls);
 }
 
+/** Opens a pot from the preflop solver in the postflop Solver, ready for a board. */
+async function openSolver(spot) {
+  await show("solver");
+  prefillSolver(views.solver, spot);
+}
+
 function start(name) {
   if (name === "study") return initStudy(views.study);
   if (name === "ranges") return initRanges(views.ranges);
   if (name === "preflop") return initPreflop(views.preflop);
   if (name === "solver") return initSolver(views.solver);
+  if (name === "pfsolver") return initPreflopSolver(views.pfsolver, { onOpenSolver: openSolver });
   if (name === "reports") return initReports(views.reports, { onOpenStudy: openStudy });
   return initTrainer(views.trainer, { onOpenStudy: openStudy });
 }

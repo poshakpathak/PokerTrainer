@@ -1,0 +1,18 @@
+{
+  "id": "btn_vs_co_3bp",
+  "name": "BTN vs CO, 3-bet pot",
+  "description": "CO opens 2.5bb, BTN 3-bets to 7.5bb, CO calls. 100bb deep, no rake. Used to fit the preflop solver's postflop model (the 3-bettor is in position).",
+  "oop": "CO",
+  "ip": "BTN",
+  "pot_bb": 16.5,
+  "stack_bb": 92.5,
+  "ranges": {
+    "oop": "JJ-66,AQs-ATs,A5s,KQs-KJs,QJs,JTs,T9s,98s,AQo",
+    "ip": "QQ+,AKs-AJs,A5s-A3s,KQs-KTs,QJs,JTs,T9s,98s,87s,76s,AKo-AQo,KQo:0.5"
+  },
+  "bets": {
+    "flop": { "oop": "33%, 66%", "ip": "33%, 66%", "raise": "3x" },
+    "turn": { "oop": "66%", "ip": "66%", "raise": "" },
+    "river": { "oop": "75%", "ip": "75%", "raise": "" }
+  }
+}
