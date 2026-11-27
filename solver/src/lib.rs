@@ -2,6 +2,7 @@
 //! from a spot and board, and turning solver nodes into JSON for the web app.
 
 pub mod locks;
+pub mod preflop;
 
 use postflop_solver::*;
 use serde::{Deserialize, Serialize};
@@ -32,7 +33,7 @@ pub struct Ranges {
     pub ip: String,
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct Rake {
     #[serde(default)]
     pub rate: f64,
