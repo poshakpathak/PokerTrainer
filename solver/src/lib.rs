@@ -1,14 +1,16 @@
 //! Shared pieces of the PokerTrainer solver tools: spot configs, building a game
 //! from a spot and board, and turning solver nodes into JSON for the web app.
 
+pub mod locks;
+
 use postflop_solver::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// Chip units per big blind. The solver works in integers, so we use 1/20 bb.
 pub const CHIPS_PER_BB: f64 = 20.0;
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct StreetBets {
     pub oop: String,
     pub ip: String,
@@ -17,20 +19,20 @@ pub struct StreetBets {
     pub donk: Option<String>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Bets {
     pub flop: StreetBets,
     pub turn: StreetBets,
     pub river: StreetBets,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Ranges {
     pub oop: String,
     pub ip: String,
 }
 
-#[derive(Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 pub struct Rake {
     #[serde(default)]
     pub rate: f64,
@@ -38,7 +40,7 @@ pub struct Rake {
     pub cap_bb: f64,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Spot {
     #[serde(default)]
     pub id: String,
@@ -48,6 +50,12 @@ pub struct Spot {
     pub bets: Bets,
     #[serde(default)]
     pub rake: Rake,
+}
+
+/// Identifies the game tree a spot builds on a board, ignoring the spot's id.
+pub fn tree_key(spot: &Spot, board: &str) -> String {
+    let spot = Spot { id: String::new(), ..spot.clone() };
+    format!("{}|{board}", serde_json::to_string(&spot).unwrap_or_default())
 }
 
 pub fn bet_sizes(s: &StreetBets) -> Result<[BetSizeOptions; 2], String> {

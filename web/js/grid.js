@@ -6,7 +6,7 @@ import { RANKS, gridClass, expandClass, splitCards } from "./cards.js";
 /**
  * @param {HTMLElement} el
  * @param {object} opts
- *   cell(cls) -> { fill: 0..1, segments: [{color, frac}], label? } | null
+ *   cell(cls) -> { fill: 0..1, segments: [{color, frac}], label?, marked? } | null
  *   onHover(cls), onClick(cls), selected
  */
 export function renderGrid(el, opts) {
@@ -17,7 +17,7 @@ export function renderGrid(el, opts) {
       const cls = gridClass(r, c);
       const info = opts.cell(cls);
       const cell = document.createElement("div");
-      cell.className = "cell" + (info ? "" : " empty") + (opts.selected === cls ? " selected" : "");
+      cell.className = "cell" + (info ? "" : " empty") + (opts.selected === cls ? " selected" : "") + (info?.marked ? " marked" : "");
       cell.dataset.cls = cls;
       if (info) {
         const bar = document.createElement("div");

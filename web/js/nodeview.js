@@ -12,11 +12,20 @@ const heat = (x) => `hsl(${Math.round(Math.max(0, Math.min(1, x)) * 130)} 60% 48
  * @param els   {grid, detail, range} elements
  * @param node  decision node: {player, actions, hands, combos, pot_bb, equity?, ev_bb?}
  * @param view  persistent view state: {mode, focus, pinned}
- * @param opts  {board, name(player)}
+ * @param opts  {board, name(player)}, and optionally:
+ *              compare: {label, node, note?}  the same decision in another solution, shown in the
+ *                       hand detail as an extra row; `note` explains that row
+ *              marked: Set of classes to flag in the grid
+ *              onCellClick(cls): return true to handle a click instead of pinning the cell
  */
 export function renderNodeView(els, node, view, opts) {
   const hands = nodeHands(node);
   const summary = classSummary(hands, node.actions.length);
+  const cmp = opts.compare && {
+    label: opts.compare.label,
+    note: opts.compare.note || `The ${opts.compare.label} row is the whole class in the other solution.`,
+    summary: classSummary(nodeHands(opts.compare.node), node.actions.length),
+  };
 
   // Bar height is each class's share of its live combos that reach this node, scaled so the
   // most-reached class fills its cell. Deep in the tree absolute reach gets tiny.
@@ -24,37 +33,43 @@ export function renderNodeView(els, node, view, opts) {
   for (const [cls, c] of summary) share.set(cls, c.reach / liveCombos(cls, opts.board));
   const maxShare = Math.max(1e-9, ...share.values());
 
+  const cellInfo = (c, fill) => {
+    if (view.mode === "ev") {
+      return { fill, segments: [{ color: heat(c.value / node.pot_bb), frac: 1 }], label: c.value.toFixed(1) };
+    }
+    if (view.mode === "equity") {
+      if (!c.hasEq) return { fill, segments: [], label: "n/a" };
+      return { fill, segments: [{ color: heat(c.eq), frac: 1 }], label: `${Math.round(c.eq * 100)}` };
+    }
+    return {
+      fill,
+      segments: node.actions.map((a, i) => ({ color: actionColor(a, node.actions), frac: c.freq[i] })),
+    };
+  };
+
   const draw = () =>
     renderGrid(els.grid, {
       selected: view.pinned ? view.focus : null,
       cell: (cls) => {
         const c = summary.get(cls);
         if (!c) return null;
-        const fill = share.get(cls) / maxShare;
-        if (view.mode === "ev") {
-          return { fill, segments: [{ color: heat(c.value / node.pot_bb), frac: 1 }], label: c.value.toFixed(1) };
-        }
-        if (view.mode === "equity") {
-          if (!c.hasEq) return { fill, segments: [], label: "n/a" };
-          return { fill, segments: [{ color: heat(c.eq), frac: 1 }], label: `${Math.round(c.eq * 100)}` };
-        }
-        return {
-          fill,
-          segments: node.actions.map((a, i) => ({ color: actionColor(a, node.actions), frac: c.freq[i] })),
-        };
+        const info = cellInfo(c, share.get(cls) / maxShare);
+        info.marked = !!opts.marked?.has(cls);
+        return info;
       },
       onHover: (cls) => {
-        if (!view.pinned) showDetail(els.detail, node, summary.get(cls), cls, view);
+        if (!view.pinned) showDetail(els.detail, node, summary.get(cls), cls, view, cmp);
       },
       onClick: (cls) => {
+        if (opts.onCellClick?.(cls)) return;
         view.pinned = !(view.pinned && view.focus === cls);
         view.focus = cls;
-        showDetail(els.detail, node, summary.get(cls), cls, view);
+        showDetail(els.detail, node, summary.get(cls), cls, view, cmp);
         draw();
       },
     });
   draw();
-  showDetail(els.detail, node, view.focus ? summary.get(view.focus) : null, view.focus, view);
+  showDetail(els.detail, node, view.focus ? summary.get(view.focus) : null, view.focus, view, cmp);
 
   if (node.equity) {
     const side = (p) => {
@@ -69,7 +84,7 @@ export function renderNodeView(els, node, view, opts) {
   }
 }
 
-function showDetail(el, node, c, cls, view) {
+function showDetail(el, node, c, cls, view, cmp) {
   view.focus = cls;
   if (!c) {
     el.innerHTML = cls
@@ -78,22 +93,26 @@ function showDetail(el, node, c, cls, view) {
     return;
   }
   const head = node.actions.map((a) => `<th><i style="background:${actionColor(a, node.actions)}"></i>${actionText(a)}</th>`).join("");
-  const row = (label, strat, ev, reach, eq) => {
+  const row = (label, strat, ev, reach, eq, rowClass = "") => {
     const best = Math.max(...ev);
-    return `<tr><td>${label}${reach !== undefined ? `<small>${(reach * 100).toFixed(0)}%</small>` : ""}</td>${strat
+    return `<tr class="${rowClass}"><td>${label}${reach !== undefined ? `<small>${(reach * 100).toFixed(0)}%</small>` : ""}</td>${strat
       .map((s, i) => `<td class="${ev[i] === best ? "best" : ""}">${(s * 100).toFixed(0)}%<small>${ev[i].toFixed(2)}</small></td>`)
       .join("")}<td>${eq == null ? "–" : `${(eq * 100).toFixed(0)}%`}</td></tr>`;
   };
+  const other = cmp?.summary.get(cls);
   el.innerHTML = `
     <h3>${cls} <small>${c.reach.toFixed(2)} combos</small></h3>
     <table class="combos">
       <thead><tr><th></th>${head}<th>Equity</th></tr></thead>
       <tbody>
         ${row("All", c.freq, c.ev, undefined, c.hasEq ? c.eq : null)}
+        ${other ? row(cmp.label, other.freq, other.ev, undefined, other.hasEq ? other.eq : null, "cmp") : ""}
         ${c.hands.map((h) => row(cardsHtml(h.combo, "tiny"), h.strat, h.ev, h.reach, h.eq)).join("")}
       </tbody>
     </table>
-    <p class="hint">Each cell shows frequency and EV in bb. The small % next to a combo is how often it gets to this spot.</p>`;
+    <p class="hint">Each cell shows frequency and EV in bb. The small % next to a combo is how often it gets to this spot.${
+      other ? ` ${cmp.note}` : ""
+    }</p>`;
 }
 
 /** Strategy / EV / Equity tab markup and wiring. */

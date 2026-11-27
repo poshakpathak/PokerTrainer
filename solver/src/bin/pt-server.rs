@@ -1,24 +1,34 @@
 //! pt-server: a local solver server for the PokerTrainer web app.
 //!
-//! It serves the web app and a small JSON API, so you can solve any spot on demand and
-//! browse the whole game tree (flop, turn and river) in the browser.
+//! It serves the web app and a small JSON API, so you can solve any spot on demand, browse the
+//! whole game tree (flop, turn and river) in the browser, and lock how one player plays at any
+//! decision to find the best way to exploit them.
 //!
 //! Usage:
 //!   pt-server [--web ../web] [--port 8080] [--max-memory-gb 8] [--threads N]
 //!
 //! API (all JSON):
-//!   POST /api/solve   {spot, board, accuracy, max_iters}  start a solve (replaces any current one)
-//!   GET  /api/status                                       progress of the current solve
-//!   POST /api/stop                                         stop early and keep the current strategy
-//!   POST /api/node    {history: [..]}                      describe the node after `history`
+//!   POST /api/solve         {spot, board, accuracy, max_iters, locks}  start a solve; `locks: true`
+//!                           applies the saved locks
+//!   GET  /api/status        progress of the current solve, the finished solutions and the saved locks
+//!   POST /api/stop          stop early and keep the current strategy
+//!   POST /api/node          {history, solution}  describe the node after `history`
+//!   POST /api/lock/preview  {history, solution, targets, hands, order}  the strategy a lock would set
+//!   POST /api/locks/add     {history, solution, targets, hands, order, wild, keep_path, label, crumbs}
+//!   POST /api/locks/remove  {id}
+//!   POST /api/locks/clear
 //!
 //! `history` lists action indexes for decision nodes and card ids (0-51) for chance nodes,
-//! the same as postflop-solver's `apply_history`.
+//! the same as postflop-solver's `apply_history`. `solution` is "gto" (the last solve without
+//! locks) or "exploit" (the last solve with them). The two are kept side by side while they
+//! fit under --max-memory-gb, so every node can be compared.
 
 use postflop_solver::*;
+use pt_solver::locks::{self, LockedNode, Recipe};
 use pt_solver::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,6 +39,10 @@ use tiny_http::{Header, Method, Request, Response, Server};
 /// How often (in iterations) the solver measures exploitability; it costs about one iteration.
 const CHECK_EVERY: u32 = 10;
 
+/// The most decisions the saved locks can cover together. A river lock on every turn and river
+/// card of a flop solve covers about 2,400.
+const MAX_LOCKED_NODES: usize = 10_000;
+
 #[derive(Deserialize)]
 struct SolveRequest {
     spot: Spot,
@@ -37,6 +51,9 @@ struct SolveRequest {
     accuracy: f32,
     #[serde(default = "default_iters")]
     max_iters: u32,
+    /// Apply the saved locks.
+    #[serde(default)]
+    locks: bool,
 }
 
 fn default_accuracy() -> f32 {
@@ -51,11 +68,81 @@ fn default_iters() -> u32 {
 struct NodeRequest {
     #[serde(default)]
     history: Vec<usize>,
+    #[serde(default)]
+    solution: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PreviewRequest {
+    #[serde(default)]
+    history: Vec<usize>,
+    #[serde(default)]
+    solution: Option<String>,
+    #[serde(flatten)]
+    recipe: Recipe,
+}
+
+#[derive(Deserialize)]
+struct AddLockRequest {
+    #[serde(default)]
+    history: Vec<usize>,
+    #[serde(default)]
+    solution: Option<String>,
+    #[serde(flatten)]
+    recipe: Recipe,
+    /// Indexes of `history` entries that are cards and should mean every card.
+    #[serde(default)]
+    wild: Vec<usize>,
+    /// Also lock this player's earlier decisions on the line as they are now.
+    #[serde(default)]
+    keep_path: bool,
+    #[serde(default)]
+    label: String,
+    #[serde(default)]
+    crumbs: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct RemoveLockRequest {
+    id: u64,
+}
+
+/// Which solution: the last solve without locks, or the last one with them.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+enum Kind {
+    #[default]
+    Gto,
+    Exploit,
+}
+
+impl Kind {
+    fn name(self) -> &'static str {
+        match self {
+            Kind::Gto => "gto",
+            Kind::Exploit => "exploit",
+        }
+    }
+
+    fn other(self) -> Kind {
+        match self {
+            Kind::Gto => Kind::Exploit,
+            Kind::Exploit => Kind::Gto,
+        }
+    }
+
+    fn parse(s: &str) -> Result<Kind, String> {
+        match s {
+            "gto" => Ok(Kind::Gto),
+            "exploit" => Ok(Kind::Exploit),
+            _ => Err(format!("solution must be \"gto\" or \"exploit\", not {s:?}")),
+        }
+    }
 }
 
 #[derive(Clone, Default)]
 struct Status {
     state: &'static str,
+    kind: Kind,
     iteration: u32,
     max_iters: u32,
     exploitability_pct: Option<f64>,
@@ -63,6 +150,7 @@ struct Status {
     elapsed_s: f64,
     memory_gb: f64,
     error: Option<String>,
+    note: Option<String>,
     board: String,
     spot: Option<Value>,
 }
@@ -71,13 +159,15 @@ impl Status {
     fn to_json(&self) -> Value {
         json!({
             "state": self.state,
+            "kind": self.kind.name(),
             "iteration": self.iteration,
             "max_iters": self.max_iters,
             "exploitability_pct": self.exploitability_pct.map(|e| round(e, 3)),
-            "target_pct": self.target_pct,
+            "target_pct": round(self.target_pct as f64, 3),
             "elapsed_s": round(self.elapsed_s, 1),
             "memory_gb": round(self.memory_gb, 2),
             "error": self.error,
+            "note": self.note,
             "board": self.board,
             "spot": self.spot,
         })
@@ -89,15 +179,177 @@ struct Solved {
     starting_pot: i32,
     /// The board as the user typed it; dealt cards are appended in order.
     board: String,
+    /// The tree it was solved on (see `tree_key`).
+    key: String,
+    memory_gb: f64,
+    /// Each player's EV at the start of the hand, in bb.
+    root_ev: [f64; 2],
+    exploitability_pct: f64,
+    iterations: u32,
+    /// For an exploit solve, the version of the saved locks it used.
+    locks_version: u64,
+}
+
+impl Solved {
+    fn summary(&self) -> Value {
+        json!({
+            "root_ev_bb": self.root_ev,
+            "exploitability_pct": round(self.exploitability_pct, 3),
+            "iterations": self.iterations,
+            "memory_gb": round(self.memory_gb, 2),
+            "locks_version": self.locks_version,
+        })
+    }
+}
+
+#[derive(Default)]
+struct Solutions {
+    gto: Option<Solved>,
+    exploit: Option<Solved>,
+}
+
+impl Solutions {
+    fn slot(&mut self, kind: Kind) -> &mut Option<Solved> {
+        match kind {
+            Kind::Gto => &mut self.gto,
+            Kind::Exploit => &mut self.exploit,
+        }
+    }
+
+    fn get(&self, kind: Kind) -> Option<&Solved> {
+        match kind {
+            Kind::Gto => self.gto.as_ref(),
+            Kind::Exploit => self.exploit.as_ref(),
+        }
+    }
+
+    /// The solution of `kind`, and the other one if it was solved on the same tree.
+    fn with_other(&mut self, kind: Kind) -> (Option<&mut Solved>, Option<&mut Solved>) {
+        let (this, other) = match kind {
+            Kind::Gto => (&mut self.gto, &mut self.exploit),
+            Kind::Exploit => (&mut self.exploit, &mut self.gto),
+        };
+        let same_tree = matches!((&*this, &*other), (Some(a), Some(b)) if a.key == b.key);
+        (this.as_mut(), if same_tree { other.as_mut() } else { None })
+    }
+
+    /// The requested solution, or by default the one solved last (`latest`) if it's there.
+    fn pick(&self, requested: Option<&str>, latest: Kind) -> Result<Kind, (u16, String)> {
+        match requested {
+            Some(s) => {
+                let kind = Kind::parse(s).map_err(bad)?;
+                if self.get(kind).is_none() {
+                    let what = if kind == Kind::Gto { "solve without locks" } else { "solve with locks" };
+                    return Err((409, format!("There's no finished {what}.")));
+                }
+                Ok(kind)
+            }
+            None => [latest, latest.other()]
+                .into_iter()
+                .find(|&k| self.get(k).is_some())
+                .ok_or((409, "No finished solve yet.".to_string())),
+        }
+    }
+}
+
+/// A saved lock: how one player plays at a decision (or at that decision on every card), built
+/// from a solution and applied the next time the spot is solved with locks.
+struct Lock {
+    id: u64,
+    label: String,
+    crumbs: Vec<String>,
+    player: usize,
+    history: Vec<usize>,
+    /// Who acted at each step of `history` (`None` for a card).
+    actors: Vec<Option<usize>>,
+    wild: Vec<usize>,
+    keep_path: bool,
+    recipe: Recipe,
+    actions: Vec<Value>,
+    before: Vec<f64>,
+    after: Vec<f64>,
+    warnings: Vec<String>,
+    from: Kind,
+    nodes: Vec<LockedNode>,
+    /// The player's earlier decisions on the line, locked as they were.
+    path: Vec<LockedNode>,
+}
+
+impl Lock {
+    /// Whether two locks cover the same decisions.
+    fn same_target(&self, other: &Lock) -> bool {
+        self.wild == other.wild
+            && self.history.len() == other.history.len()
+            && self.history.iter().zip(&other.history).enumerate().all(|(i, (a, b))| a == b || self.wild.contains(&i))
+    }
+
+    fn summary(&self) -> Value {
+        json!({
+            "id": self.id,
+            "label": self.label,
+            "crumbs": self.crumbs,
+            "player": if self.player == 0 { "oop" } else { "ip" },
+            "history": self.history,
+            "actors": actors_json(&self.actors),
+            "wild": self.wild,
+            "keep_path": self.keep_path,
+            "targets": self.recipe.targets,
+            "hands": self.recipe.hands,
+            "order": self.recipe.order,
+            "actions": self.actions,
+            "before": locks::rounded(&self.before),
+            "after": locks::rounded(&self.after),
+            "warnings": self.warnings,
+            "from": self.from.name(),
+            "nodes": self.nodes.len(),
+            "path_nodes": self.path.len(),
+        })
+    }
+}
+
+/// The saved locks. They belong to one tree (`key`); solving a different spot clears them.
+#[derive(Default)]
+struct LockSet {
+    key: String,
+    /// Goes up on every change, so a solve can tell whether it used the current locks.
+    version: u64,
+    next_id: u64,
+    locks: Vec<Lock>,
+}
+
+impl LockSet {
+    fn summaries(&self) -> Vec<Value> {
+        self.locks.iter().map(Lock::summary).collect()
+    }
+
+    /// Every locked decision in the order to apply them: the kept earlier decisions first, then
+    /// the locks from the most general (most "every card" steps) to the most specific, so the
+    /// more specific lock wins where two overlap.
+    fn ordered_nodes(&self) -> Vec<LockedNode> {
+        let mut by_generality: Vec<&Lock> = self.locks.iter().collect();
+        by_generality.sort_by_key(|l| std::cmp::Reverse(l.wild.len()));
+        self.locks
+            .iter()
+            .flat_map(|l| l.path.iter().cloned())
+            .chain(by_generality.iter().flat_map(|l| l.nodes.iter().cloned()))
+            .collect()
+    }
+
+    fn json(&self) -> Value {
+        json!({ "locks": self.summaries(), "locks_version": self.version })
+    }
 }
 
 struct App {
     web_root: PathBuf,
     max_memory_gb: f64,
     status: Arc<Mutex<Status>>,
-    game: Arc<Mutex<Option<Solved>>>,
+    solutions: Arc<Mutex<Solutions>>,
     cancel: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
+    /// The kind of solve the worker is (or was last) filling.
+    worker_kind: Kind,
+    locks: LockSet,
 }
 
 type ApiResult = Result<Value, (u16, String)>;
@@ -106,20 +358,50 @@ fn bad(msg: impl Into<String>) -> (u16, String) {
     (400, msg.into())
 }
 
+/// Each player's EV at the root, in bb.
+fn root_ev(game: &mut PostFlopGame) -> [f64; 2] {
+    game.back_to_root();
+    game.cache_normalized_weights();
+    let mut ev = [0.0; 2];
+    for (p, e) in ev.iter_mut().enumerate() {
+        *e = round(compute_average(&game.expected_values(p), game.normalized_weights(p)) as f64 / CHIPS_PER_BB, 3);
+    }
+    ev
+}
+
+/// Who acted at each step of a history: "oop", "ip", or null where a card was dealt.
+fn actors_json(actors: &[Option<usize>]) -> Value {
+    json!(actors
+        .iter()
+        .map(|a| a.map(|p| if p == 0 { "oop" } else { "ip" }))
+        .collect::<Vec<_>>())
+}
+
 impl App {
-    fn stop_worker(&mut self) {
+    /// Stops the worker. Returns whether it was still solving, i.e. its result is incomplete.
+    fn stop_worker(&mut self) -> bool {
+        let mut was_solving = false;
         if let Some(handle) = self.worker.take() {
+            was_solving = !handle.is_finished();
             self.cancel.store(true, Ordering::SeqCst);
             let _ = handle.join();
         }
         self.cancel.store(false, Ordering::SeqCst);
+        was_solving
     }
 
     fn start_solve(&mut self, body: &str) -> ApiResult {
         let raw: Value = serde_json::from_str(body).map_err(|e| bad(e.to_string()))?;
         let req: SolveRequest = serde_json::from_value(raw.clone()).map_err(|e| bad(e.to_string()))?;
-        self.stop_worker();
-        *self.game.lock().unwrap() = None;
+        let key = tree_key(&req.spot, &req.board);
+        if req.locks {
+            if self.locks.locks.is_empty() {
+                return Err(bad("There are no saved locks to solve with."));
+            }
+            if self.locks.key != key {
+                return Err(bad("The saved locks were made for a different spot or board."));
+            }
+        }
 
         let (mut game, starting_pot) = build_game(&req.spot, &req.board).map_err(bad)?;
         let (_, mem_compressed) = game.memory_usage();
@@ -132,11 +414,47 @@ impl App {
             )));
         }
 
+        // A solve replaces the last one of its kind. The other kind stays for comparison if it's
+        // the same tree and both fit in memory. A solve that was cut off by this one is dropped.
+        let kind = if req.locks { Kind::Exploit } else { Kind::Gto };
+        if self.stop_worker() {
+            *self.solutions.lock().unwrap().slot(self.worker_kind) = None;
+        }
+        let mut note = None;
+        {
+            let mut sols = self.solutions.lock().unwrap();
+            *sols.slot(kind) = None;
+            let other = sols.slot(kind.other());
+            if let Some(o) = other.as_ref() {
+                if o.key != key {
+                    *other = None;
+                } else if o.memory_gb + memory_gb > self.max_memory_gb {
+                    *other = None;
+                    note = Some(format!(
+                        "There isn't room under --max-memory-gb for both solutions, so the {} one was dropped \
+                         and there's nothing to compare against.",
+                        if kind == Kind::Gto { "locked" } else { "GTO" }
+                    ));
+                }
+            }
+        }
+        if self.locks.key != key {
+            if !self.locks.locks.is_empty() {
+                self.locks.locks.clear();
+                self.locks.version += 1;
+            }
+            self.locks.key = key.clone();
+        }
+        let lock_nodes = if req.locks { self.locks.ordered_nodes() } else { Vec::new() };
+        let locks_version = if req.locks { self.locks.version } else { 0 };
+
         *self.status.lock().unwrap() = Status {
             state: "solving",
+            kind,
             max_iters: req.max_iters,
             target_pct: req.accuracy,
             memory_gb,
+            note,
             board: req.board.clone(),
             spot: Some(raw["spot"].clone()),
             ..Default::default()
@@ -144,13 +462,26 @@ impl App {
 
         let board = req.board.clone();
         let status = self.status.clone();
-        let slot = self.game.clone();
+        let solutions = self.solutions.clone();
         let cancel = self.cancel.clone();
+        self.worker_kind = kind;
         self.worker = Some(std::thread::spawn(move || {
             let t0 = Instant::now();
             game.allocate_memory(true);
+            // Locks go on after memory is allocated and before solving.
+            for node in &lock_nodes {
+                if let Err(e) = locks::apply(&mut game, node) {
+                    let mut s = status.lock().unwrap();
+                    s.state = "failed";
+                    s.error = Some(format!("Couldn't apply the locks: {e}"));
+                    return;
+                }
+            }
+            game.back_to_root();
+
             let target = starting_pot as f32 * req.accuracy / 100.0;
             let mut iteration = 0;
+            let mut expl_pct = f64::NAN;
             while iteration < req.max_iters {
                 if cancel.load(Ordering::SeqCst) {
                     break;
@@ -165,7 +496,8 @@ impl App {
                 s.iteration = iteration;
                 s.elapsed_s = t0.elapsed().as_secs_f64();
                 if let Some(e) = expl {
-                    s.exploitability_pct = Some(e as f64 / starting_pot as f64 * 100.0);
+                    expl_pct = e as f64 / starting_pot as f64 * 100.0;
+                    s.exploitability_pct = Some(expl_pct);
                     if e <= target {
                         break;
                     }
@@ -173,46 +505,68 @@ impl App {
             }
             if iteration % CHECK_EVERY != 0 {
                 let e = compute_exploitability(&game);
-                status.lock().unwrap().exploitability_pct = Some(e as f64 / starting_pot as f64 * 100.0);
+                expl_pct = e as f64 / starting_pot as f64 * 100.0;
+                status.lock().unwrap().exploitability_pct = Some(expl_pct);
             }
             finalize(&mut game);
-            *slot.lock().unwrap() = Some(Solved { game, starting_pot, board });
+            let root_ev = root_ev(&mut game);
+            *solutions.lock().unwrap().slot(kind) = Some(Solved {
+                game,
+                starting_pot,
+                board,
+                key,
+                memory_gb,
+                root_ev,
+                exploitability_pct: expl_pct,
+                iterations: iteration,
+                locks_version,
+            });
             let mut s = status.lock().unwrap();
             s.state = "done";
             s.elapsed_s = t0.elapsed().as_secs_f64();
         }));
-        Ok(json!({ "ok": true, "memory_gb": round(memory_gb, 2) }))
+        Ok(json!({ "ok": true, "memory_gb": round(memory_gb, 2), "kind": kind.name() }))
+    }
+
+    fn status_json(&self) -> Value {
+        let mut v = self.status.lock().unwrap().to_json();
+        let sols = self.solutions.lock().unwrap();
+        v["solutions"] = json!({
+            "gto": sols.gto.as_ref().map(Solved::summary),
+            "exploit": sols.exploit.as_ref().map(Solved::summary),
+        });
+        v["locks"] = json!(self.locks.summaries());
+        v["locks_version"] = json!(self.locks.version);
+        v
+    }
+
+    fn latest(&self) -> Kind {
+        self.status.lock().unwrap().kind
     }
 
     fn node(&mut self, body: &str) -> ApiResult {
         let req: NodeRequest = serde_json::from_str(body).map_err(|e| bad(e.to_string()))?;
-        let mut slot = self.game.lock().unwrap();
-        let solved = slot.as_mut().ok_or((409, "No finished solve yet.".to_string()))?;
+        let latest = self.latest();
+        let mut sols = self.solutions.lock().unwrap();
+        let kind = sols.pick(req.solution.as_deref(), latest)?;
+        let (Some(solved), other) = sols.with_other(kind) else { unreachable!() };
         let game = &mut solved.game;
 
         // Walk the history step by step so a bad entry gives an error instead of a panic.
-        game.back_to_root();
+        let actors = locks::navigate(game, &req.history).map_err(bad)?;
         let mut board = solved.board.clone();
-        for (i, &step) in req.history.iter().enumerate() {
-            if game.is_terminal_node() {
-                return Err(bad(format!("history[{i}]: the hand is already over")));
-            }
-            if game.is_chance_node() {
-                if step >= 52 || game.possible_cards() & (1u64 << step) == 0 {
-                    return Err(bad(format!("history[{i}]: card {step} can't be dealt here")));
-                }
+        for (&step, actor) in req.history.iter().zip(&actors) {
+            if actor.is_none() {
                 board.push_str(&card_to_string(step as u8).unwrap_or_default());
-            } else if step >= game.available_actions().len() {
-                return Err(bad(format!("history[{i}]: no action {step} here")));
             }
-            game.play(step);
         }
+        let actors = actors_json(&actors);
 
         let street_bets = game.total_bet_amount();
         let pot = solved.starting_pot + street_bets[0] + street_bets[1];
 
         if game.is_terminal_node() {
-            return Ok(json!({ "type": "terminal", "board": board, "pot_bb": bb(pot) }));
+            return Ok(json!({ "type": "terminal", "solution": kind.name(), "board": board, "pot_bb": bb(pot), "actors": actors }));
         }
 
         if game.is_chance_node() {
@@ -247,16 +601,198 @@ impl App {
                 cards.push(entry);
                 game.apply_history(&req.history);
             }
-            return Ok(json!({ "type": "chance", "board": board, "pot_bb": bb(pot), "cards": cards }));
+            return Ok(json!({
+                "type": "chance",
+                "solution": kind.name(),
+                "board": board,
+                "pot_bb": bb(pot),
+                "actors": actors,
+                "cards": cards,
+            }));
         }
 
         let player = game.current_player();
         let combos = holes_to_strings(game.private_cards(player)).map_err(bad)?;
+        let locked = game.current_locking_strategy().is_some();
         let mut node = decision_node_json(game, solved.starting_pot);
         node["type"] = json!("decision");
+        node["solution"] = json!(kind.name());
+        node["locked"] = json!(locked);
         node["board"] = json!(board);
         node["combos"] = json!(combos);
+        node["actors"] = actors;
+
+        // The same decision in the other solution, to compare against.
+        if let Some(o) = other {
+            let og = &mut o.game;
+            if locks::navigate(og, &req.history).is_ok()
+                && !og.is_terminal_node()
+                && !og.is_chance_node()
+                && og.available_actions().len() == node["actions"].as_array().map_or(0, |a| a.len())
+            {
+                let olocked = og.current_locking_strategy().is_some();
+                let c = decision_node_json(og, o.starting_pot);
+                node["compare"] = json!({
+                    "solution": kind.other().name(),
+                    "locked": olocked,
+                    "hands": c["hands"],
+                    "equity": c["equity"],
+                    "ev_bb": c["ev_bb"],
+                });
+            }
+        }
         Ok(node)
+    }
+
+    fn lock_preview(&mut self, body: &str) -> ApiResult {
+        let req: PreviewRequest = serde_json::from_str(body).map_err(|e| bad(e.to_string()))?;
+        let latest = self.latest();
+        let mut sols = self.solutions.lock().unwrap();
+        let kind = sols.pick(req.solution.as_deref(), latest)?;
+        let solved = sols.slot(kind).as_mut().unwrap();
+        locks::navigate(&mut solved.game, &req.history).map_err(bad)?;
+        let built = locks::build(&mut solved.game, solved.starting_pot, &req.recipe).map_err(bad)?;
+        let n = solved.game.num_private_hands(solved.game.current_player());
+        let k = built.after.len();
+        let strategy: Vec<Vec<f64>> = (0..n)
+            .map(|h| (0..k).map(|a| round(built.strategy[a * n + h] as f64, 3)).collect())
+            .collect();
+        Ok(json!({
+            "strategy": strategy,
+            "before": locks::rounded(&built.before),
+            "after": locks::rounded(&built.after),
+            "warnings": built.warnings,
+        }))
+    }
+
+    fn lock_add(&mut self, body: &str) -> ApiResult {
+        let req: AddLockRequest = serde_json::from_str(body).map_err(|e| bad(e.to_string()))?;
+        let latest = self.latest();
+        let mut sols = self.solutions.lock().unwrap();
+        let kind = sols.pick(req.solution.as_deref(), latest)?;
+        let solved = sols.slot(kind).as_mut().unwrap();
+        if !self.locks.locks.is_empty() && self.locks.key != solved.key {
+            return Err((409, "The saved locks are for a different spot. Clear them first.".into()));
+        }
+        let starting_pot = solved.starting_pot;
+        let game = &mut solved.game;
+
+        let actors = locks::navigate(game, &req.history).map_err(bad)?;
+        if game.is_terminal_node() || game.is_chance_node() {
+            return Err(bad("Only a decision can be locked."));
+        }
+        let player = game.current_player();
+        let street_bets = game.total_bet_amount();
+        let pot = starting_pot + street_bets[0] + street_bets[1];
+        let actions: Vec<Value> = game
+            .available_actions()
+            .iter()
+            .map(|a| action_json(a, pot, street_bets, player))
+            .collect();
+        // The decision the lock was made at also checks the recipe and gives the summary.
+        let here = locks::build(game, starting_pot, &req.recipe).map_err(bad)?;
+
+        let mut wild = req.wild.clone();
+        wild.sort_unstable();
+        wild.dedup();
+        let histories = locks::expand(game, &req.history, &wild).map_err(bad)?;
+        let mut nodes = Vec::with_capacity(histories.len());
+        for h in &histories {
+            locks::navigate(game, h).map_err(bad)?;
+            if game.is_terminal_node()
+                || game.is_chance_node()
+                || game.current_player() != player
+                || game.available_actions().len() != actions.len()
+            {
+                return Err(bad("The decision isn't the same on every card."));
+            }
+            let built = locks::build(game, starting_pot, &req.recipe).map_err(bad)?;
+            nodes.push(LockedNode { history: h.clone(), strategy: built.strategy });
+        }
+
+        let mut path = Vec::new();
+        if req.keep_path {
+            let mut seen = HashSet::new();
+            for h in &histories {
+                for p in locks::decisions_on_path(game, h, player).map_err(bad)? {
+                    if seen.insert(p.clone()) {
+                        locks::navigate(game, &p).map_err(bad)?;
+                        let built = locks::build(game, starting_pot, &Recipe::default()).map_err(bad)?;
+                        path.push(LockedNode { history: p, strategy: built.strategy });
+                    }
+                }
+            }
+        }
+
+        let mut lock = Lock {
+            id: 0,
+            label: req.label.chars().take(300).collect(),
+            crumbs: req.crumbs.iter().take(64).map(|c| c.chars().take(80).collect()).collect(),
+            player,
+            history: req.history.clone(),
+            actors,
+            wild,
+            keep_path: req.keep_path,
+            recipe: req.recipe,
+            actions,
+            before: here.before,
+            after: here.after,
+            warnings: here.warnings,
+            from: kind,
+            nodes,
+            path,
+        };
+        let replaces = self.locks.locks.iter().position(|l| l.same_target(&lock));
+        let others: usize = self
+            .locks
+            .locks
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| Some(*i) != replaces)
+            .map(|(_, l)| l.nodes.len() + l.path.len())
+            .sum();
+        if others + lock.nodes.len() + lock.path.len() > MAX_LOCKED_NODES {
+            return Err(bad(format!(
+                "That would lock {} decisions, over the limit of {MAX_LOCKED_NODES}. Lock fewer cards or remove a lock.",
+                others + lock.nodes.len() + lock.path.len()
+            )));
+        }
+
+        if self.locks.locks.is_empty() {
+            self.locks.key = solved.key.clone();
+        }
+        match replaces {
+            Some(i) => {
+                lock.id = self.locks.locks[i].id;
+                self.locks.locks[i] = lock;
+            }
+            None => {
+                self.locks.next_id += 1;
+                lock.id = self.locks.next_id;
+                self.locks.locks.push(lock);
+            }
+        }
+        self.locks.version += 1;
+        Ok(self.locks.json())
+    }
+
+    fn lock_remove(&mut self, body: &str) -> ApiResult {
+        let req: RemoveLockRequest = serde_json::from_str(body).map_err(|e| bad(e.to_string()))?;
+        let before = self.locks.locks.len();
+        self.locks.locks.retain(|l| l.id != req.id);
+        if self.locks.locks.len() == before {
+            return Err((404, format!("No lock {}.", req.id)));
+        }
+        self.locks.version += 1;
+        Ok(self.locks.json())
+    }
+
+    fn lock_clear(&mut self) -> ApiResult {
+        if !self.locks.locks.is_empty() {
+            self.locks.locks.clear();
+            self.locks.version += 1;
+        }
+        Ok(self.locks.json())
     }
 
     fn handle(&mut self, mut req: Request) {
@@ -275,19 +811,17 @@ impl App {
             return;
         }
         let result = match (&method, url.as_str()) {
-            (Method::Get, "/api/status") => Ok(self.status.lock().unwrap().to_json()),
+            (Method::Get, "/api/status") => Ok(self.status_json()),
             (Method::Post, "/api/solve") => self.start_solve(&body),
             (Method::Post, "/api/stop") => {
                 self.cancel.store(true, Ordering::SeqCst);
                 Ok(json!({ "ok": true }))
             }
-            (Method::Post, "/api/node") => {
-                if self.status.lock().unwrap().state != "done" {
-                    Err((409, "The solve hasn't finished yet.".to_string()))
-                } else {
-                    self.node(&body)
-                }
-            }
+            (Method::Post, "/api/node") => self.node(&body),
+            (Method::Post, "/api/lock/preview") => self.lock_preview(&body),
+            (Method::Post, "/api/locks/add") => self.lock_add(&body),
+            (Method::Post, "/api/locks/remove") => self.lock_remove(&body),
+            (Method::Post, "/api/locks/clear") => self.lock_clear(),
             _ => Err((404, "not found".to_string())),
         };
         let resp = match result {
@@ -372,9 +906,11 @@ fn main() {
         web_root: web,
         max_memory_gb,
         status: Arc::new(Mutex::new(Status { state: "idle", ..Default::default() })),
-        game: Arc::new(Mutex::new(None)),
+        solutions: Arc::new(Mutex::new(Solutions::default())),
         cancel: Arc::new(AtomicBool::new(false)),
         worker: None,
+        worker_kind: Kind::Gto,
+        locks: LockSet::default(),
     };
     for req in server.incoming_requests() {
         app.handle(req);

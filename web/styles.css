@@ -20,6 +20,8 @@
   --suit-h: #d0453a;
   --suit-d: #2f6fde;
   --suit-c: #2e9d5b;
+  --lock: #8a5cf6;
+  --lock-bg: #f1ecfe;
   color-scheme: light;
 }
 
@@ -32,6 +34,8 @@
     --line: #2c3038;
     --cell-empty: #262a31;
     --suit-s: #e8eaee;
+    --lock: #a98bfa;
+    --lock-bg: #2a2340;
     color-scheme: dark;
   }
 }
@@ -87,6 +91,7 @@ h3 { margin: 0 0 10px; font-size: 15px; }
 h3 small { color: var(--muted); font-weight: 400; margin-left: 6px; }
 label { display: block; margin-bottom: 10px; color: var(--muted); font-size: 12px; font-weight: 600; }
 label.check { color: var(--text); font-weight: 400; font-size: 13px; margin-bottom: 4px; }
+label.check input { display: inline-block; width: auto; margin: 0 6px 0 0; vertical-align: -2px; }
 select, input, textarea {
   display: block; width: 100%; margin-top: 4px; padding: 6px 8px; font: inherit; font-size: 14px;
   color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
@@ -242,3 +247,67 @@ table.sizes input { margin: 0; padding: 4px 6px; }
 .narrow { max-width: 560px; }
 pre { background: var(--bg); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
 pre code { background: none; padding: 0; }
+
+/* Node locking */
+.lock-icon { width: 12px; height: 12px; flex: none; vertical-align: -1px; margin-right: 6px; color: var(--lock); }
+button.secondary {
+  display: inline-flex; align-items: center; font: inherit; font-size: 13px; font-weight: 600;
+  padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg);
+  color: var(--text); cursor: pointer;
+}
+button.secondary:hover { border-color: var(--lock); }
+button.primary:disabled, button.secondary:disabled { cursor: default; opacity: 0.6; }
+.lockbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 4px 0 6px; }
+.lockbadge {
+  display: flex; align-items: baseline; gap: 0; margin: 0 0 10px; padding: 6px 8px; border-radius: 6px;
+  background: var(--lock-bg); font-size: 12px;
+}
+.actions button em small { display: block; font-size: 11px; text-align: right; }
+.cell.marked::after {
+  content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--lock); box-shadow: 0 0 0 1.5px var(--panel);
+}
+table.combos tr.cmp td { color: var(--muted); }
+#sv-cmp { margin: 4px 0 0; }
+
+.lockedit { border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 12px; }
+.lockedit h3 { display: flex; align-items: center; }
+table.lockfreq { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 6px; }
+table.lockfreq th { text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); padding: 3px 4px; }
+table.lockfreq td { padding: 3px 4px; border-top: 1px solid var(--line); white-space: nowrap; }
+table.lockfreq td:last-child { display: flex; align-items: center; gap: 4px; color: var(--muted); }
+table.lockfreq input { width: 72px; margin: 0; padding: 3px 6px; text-align: right; }
+#lk-result { min-height: 1em; }
+.brushes { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0 2px; }
+.brushes span { color: var(--muted); font-size: 12px; font-weight: 600; margin-right: 4px; }
+.brushes button {
+  display: inline-flex; align-items: center; font: inherit; font-size: 12px; padding: 3px 8px; border-radius: 5px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer;
+}
+.brushes button.active { border-color: var(--lock); box-shadow: inset 0 0 0 1px var(--lock); }
+.brushes button i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 8px; }
+.chip {
+  display: inline-flex; align-items: center; font-size: 12px; padding: 1px 7px; border-radius: 10px;
+  background: var(--lock-bg); cursor: pointer;
+}
+.chip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.lockedit .error:empty, .locks .error:empty { display: none; }
+.lockbtns { display: flex; align-items: center; gap: 14px; margin-top: 8px; }
+
+.locks { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.locks h3 { display: flex; align-items: center; }
+.locks ul { list-style: none; padding: 0; margin: 0 0 10px; }
+.locks li { padding: 6px 0 6px 8px; border-left: 3px solid var(--lock); margin-bottom: 6px; font-size: 12px; }
+.locks li .freqbar { height: 6px; margin: 4px 0 2px; }
+.locks li small { color: var(--muted); }
+.lockhead { display: flex; align-items: flex-start; gap: 6px; }
+.lockhead a { color: var(--accent); cursor: pointer; overflow-wrap: anywhere; }
+button.x {
+  margin-left: auto; flex: none; border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1;
+  padding: 0 2px; cursor: pointer;
+}
+button.x:hover { color: var(--bad); }
+.locks .tabs { margin: 12px 0 6px; }
+.locks .up { color: var(--good); }
+.locks .down { color: var(--bad); }
