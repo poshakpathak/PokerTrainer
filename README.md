@@ -35,8 +35,10 @@ It has three parts:
    - **Postflop solver** solves any spot you set up (ranges, board, pot, stacks, bet sizes,
      rake) on your own machine and lets you browse the whole tree: flop, turn and river, on any turn or river
      card, with a report of the strategy on every card. You can also **lock** how a player plays
-     at any decision (see [Node locking](#node-locking)) and solve again to find the best
-     exploit, side by side with GTO. Needs the local server below.
+     at any decision (see [Node locking](#node-locking)), or make them play like a common
+     **player type** such as a calling station or a nit everywhere (see
+     [Player types](#player-types)), and solve again to find the best exploit, side by side
+     with GTO. Needs the local server below.
    - **Ranges** shows the preflop ranges each spot was solved with.
    - **Multiway solver** solves three-way pots, the ones you see all the time in live and
      low-stakes games: set up three ranges and a board, then browse every player's strategy,
@@ -90,9 +92,24 @@ solver. Pick where the spots come from:
 - **Your solve**: whole hands, flop to river, on the spot you solved in the Postflop solver
   tab. The other player is dealt a real hand from their range and plays the solver's strategy
   for it, turn and river cards come at random, and at showdown you see what they had. Pick
-  your seat and the streets you decide on; the solver plays your hand on the others. If you've
-  also solved with locks, **Play against: Your locks** has the locked player play your locks
-  while you're scored against the best exploit. Needs pt-server.
+  your seat and the streets you decide on; the solver plays your hand on the others. Needs
+  pt-server.
+
+**Play against** picks who the other player is in **Your solve**:
+
+- **GTO**: the solver's strategy.
+- **Your locks**: if you've solved with locks, the locked player plays them.
+- **A player type** (calling station, nit, maniac, and more; see [Player types](#player-types)):
+  the other player plays like that type at every decision. Pick the type, its strength and
+  your seat, then click **Solve against a calling station** (or whichever type): it sets the
+  type on the other seat and solves for the best way to exploit it, which is usually quicker
+  than the GTO solve. The hands start when it's done.
+
+Against your locks or a player type you're scored against the best exploit, not GTO, so the
+right play is often one GTO wouldn't make. The result shows GTO's frequencies with your hand
+next to the exploit's and says when they differ, and the range view adds a GTO row for each
+hand class. The Leaks panel keeps decisions against each player type apart (e.g. "River,
+facing a bet · vs Nit"), and clicking one drills against that type again.
 
 After each decision you get every action's solver frequency, EV and EV lost, how the solver
 plays every hand at that point, and a link to the same spot in the Preflop solver, Study or
@@ -142,6 +159,58 @@ hand, every action shows its frequency in the other solution, and the hand detai
 other solution's row for the hovered hand class. Locks belong to the spot and board they were
 made on: solving a different spot clears them, and they're kept in the server's memory, so
 restarting pt-server clears them too. Both solutions have to fit under `--max-memory-gb`.
+
+## Player types
+
+Locking decisions one at a time is slow when what you know is how a kind of player plays
+everywhere. A **player type** locks every decision of one player at once:
+
+| Type | Plays like this |
+| --- | --- |
+| Calling station | Calls far too often, rarely raises, and bets less, almost never as a bluff. |
+| Nit | Folds too often to bets and raises, and bets and raises only with strong hands. |
+| Maniac | Bets and raises far too often, mostly as bluffs, and rarely folds. |
+| Gives up on the turn | Calls flop bets too often, then folds too much when you keep betting the turn and river. |
+| Rarely bluffs the river | Plays like GTO until the river, where their bets and raises are almost always value. |
+
+1. Solve the spot in the Postflop solver tab (the type starts from that GTO solve).
+2. In the Locks panel, pick the **Player type**, who plays it, and its **Strength**: **Mild**,
+   **Typical** or **Extreme**. **How they play compared with GTO** shows the type as a table.
+3. Click **Solve against a calling station** (or whichever type). The type is set up at every
+   decision first, with its own progress bar, then the other player is solved to exploit it.
+4. Switch between **Exploit** and **GTO** at any node like with locks, or click **Drill against
+   a calling station** to play hands against it in the Drill.
+
+How a type is built. A type says how often the player folds, checks or calls, and bets or
+raises compared with GTO, for each street and for what they face: nothing to call, a bet or a
+raise. The calling station, for example, folds 0.3 times as often as GTO facing a turn bet. At
+each of the player's decisions, from the flop down, pt-server takes the GTO strategy, scales
+each kind of action by its weight, scales the frequencies back to 100%, and then moves hands
+between actions until the range plays those frequencies. The strongest hands (by equity) are
+the first to call, bet or raise more and the weakest the first to fold or check more, except
+that a type that bluffs too much (the maniac) makes its extra bets and raises with its weakest
+hands. Each decision starts from the range the player really brings there after playing the
+type on the earlier streets. Strength raises every weight to a power, so Mild is about half as
+far from GTO as Typical and Extreme about 1.6 times as far.
+
+A type works together with your own locks: a lock you saved on one of the type's decisions
+wins over the type there (the type still plays the earlier decisions on that line), and you
+can lock the other player too. Locks, the type and the GTO solve all belong to the same spot
+and board.
+
+Limits:
+
+- An action GTO never takes at a decision stays at 0%. A calling station can only call more
+  where GTO calls at all.
+- The GTO solve has to stay in memory to build from, and the type's locks take memory too,
+  about half the solve's size again. The GTO solve, the exploit solve and the locks all have
+  to fit under `--max-memory-gb`: on the BTN vs BB single-raised pot on Ks7d2c that's 2.1 GB
+  plus 3.0 GB.
+- Setting the type up walks the whole tree once: about a second on the BB vs BTN 3-bet pot and
+  about 40 seconds on that single-raised pot. The exploit solve after it is quick (about 25
+  seconds there), since only one player is still free.
+- Hand strength is equity against the other player's starting range on the current board, not
+  against their range on the line, so it's a ranking of raw strength, draws included.
 
 ## Simple strategies
 
@@ -405,13 +474,15 @@ representative per texture.
 | Request | Body | Returns |
 | --- | --- | --- |
 | `POST /api/solve` | `{spot, board, accuracy, max_iters, locks}`; `spot` has the same shape as `spots/*.json`; `locks: true` applies the saved locks | starts a solve (replacing any current one) |
-| `GET /api/status` | | state, iteration, exploitability, time, memory, the finished solutions and the saved locks |
+| `GET /api/status` | | state, iteration, exploitability, time, memory, the finished solutions, the saved locks and the player type; while a type is set up before a solve, `phase` is `"profile"` and `phase_progress` goes from 0 to 1 |
 | `POST /api/stop` | | stops early and keeps the current strategy |
 | `POST /api/node` | `{history, solution}` | the node after `history`: a decision (strategy, EV and equity per combo, and the same decision in the other solution), a chance node (a summary for every card that can come), or terminal |
 | `POST /api/lock/preview` | `{history, solution, targets, hands, order}` | the strategy per combo a lock would set, and the frequencies before and after |
 | `POST /api/locks/add` | `{history, solution, targets, hands, order, wild, keep_path, label}` | saves a lock (replacing one on the same decision) and returns all locks |
 | `POST /api/locks/remove` | `{id}` | removes a lock |
-| `POST /api/locks/clear` | | removes every lock |
+| `POST /api/locks/clear` | | removes every lock and the player type |
+| `POST /api/profile` | `{player, profile}`; `player` is `"oop"` or `"ip"` | sets the player type the next solve with locks uses (needs the GTO solve of the spot) and returns all locks |
+| `POST /api/profile/clear` | | removes the player type |
 | `POST /api/preflop/solve` | `{config, max_iters, target_mbb}`; `config` takes the settings in [Preflop solver](#preflop-solver) | starts a preflop solve (replacing any current one) |
 | `GET /api/preflop/status` | | state (`tables` while building the equity tables), iteration, exploitability and its history, time |
 | `POST /api/preflop/stop` | | stops early and keeps the current strategy |
@@ -431,6 +502,13 @@ hands change first to reach them: `"ev"` (least EV lost, the default), `"weak"` 
 (by equity). `hands` fixes hand classes or combos to a mix, e.g. `{"AKs": [0, 1], "QhJh": [1, 0]}`.
 `wild` lists the steps of `history` that are cards to treat as any card, and `keep_path`
 also locks the same player's earlier decisions on the line as they are.
+
+A player type's `profile` is `{id, name, strength, rules}`. Each rule is
+`{street, facing, fold, passive, aggressive, bluff}`: `street` is `"flop"`, `"turn"` or
+`"river"`, `facing` is `"none"`, `"bet"` or `"raise"`, the three weights (0 to 100, 1 is GTO)
+scale how often the player folds, checks or calls, and bets or raises, and `bluff: true` makes
+the extra bets and raises come from the weakest hands. Situations without a rule play GTO, and
+`strength` (0 to 3) raises every weight to that power. The presets are in `web/js/profiles.js`.
 
 ## Roadmap
 

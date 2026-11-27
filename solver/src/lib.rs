@@ -4,6 +4,7 @@
 pub mod locks;
 pub mod multiway;
 pub mod preflop;
+pub mod profile;
 
 use postflop_solver::*;
 use serde::{Deserialize, Serialize};

@@ -1,10 +1,12 @@
 // Solver view: set up any spot, solve it on the local pt-server, and browse the full tree
 // (flop, turn and river) including any turn or river card. You can lock how a player plays at
-// any decision and solve again to see the best way to exploit that, next to GTO.
+// any decision, or make them play like a player type (a calling station, a nit, ...) everywhere,
+// and solve again to see the best way to exploit that, next to GTO.
 
 import { cardsHtml, splitCards, RANKS } from "./cards.js";
 import { loadIndex, nodeHands, rangeFrequencies, classSummary, actionText, actionColor, actionLabel } from "./data.js";
 import { renderNodeView, modeTabsHtml, wireModeTabs } from "./nodeview.js";
+import * as types from "./profiles.js";
 import { renderSimple } from "./simplifyview.js";
 
 const state = {
@@ -28,6 +30,7 @@ const ORDERS = [
   ["strong", "The strongest hands"],
 ];
 const LOCK_ICON = `<svg class="lock-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="3" y="7" width="10" height="7.5" rx="1.5" fill="currentColor"/></svg>`;
+const PTYPE_PREFS = "pokertrainer.ptype.v1";
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const pct = (x, digits = 1) => `${(x * 100).toFixed(digits)}%`;
@@ -288,11 +291,24 @@ function handleStatus(root, s) {
     }
     return;
   }
+  if (s.state === "solving" && s.phase === "profile") {
+    const p = s.profile;
+    progress.innerHTML = `
+      <div class="progress"><span style="width:${(s.phase_progress || 0) * 100}%"></span></div>
+      <p class="meta">Setting up ${p ? `${esc(name(p.player))} as ${esc(types.typeNoun(p))}` : "the player type"} ${cardsHtml(s.board, "tiny")} ·
+        ${pct(s.phase_progress || 0, 0)} · ${s.elapsed_s}s · ${s.memory_gb} GB</p>
+      <p class="hint">Every decision ${p ? esc(name(p.player)) : "the player"} makes is locked first, then the solve starts.</p>
+      <button id="sv-stop" class="link">Stop</button>`;
+    root.querySelector("#sv-stop").onclick = () => api("stop", {});
+    poll(root);
+    return;
+  }
   const expl = s.exploitability_pct == null ? "measuring…" : `${s.exploitability_pct.toFixed(2)}% of pot`;
   const frac = s.exploitability_pct == null
     ? s.iteration / Math.max(1, s.max_iters)
     : Math.max(s.iteration / Math.max(1, s.max_iters), Math.min(1, s.target_pct / Math.max(s.exploitability_pct, 1e-6)));
-  const what = `${s.state === "done" ? "Solved" : "Solving"}${s.kind === "exploit" ? " with locks" : ""}`;
+  const typed = s.kind === "exploit" && (s.state === "done" ? s.solutions?.exploit?.profile : s.profile);
+  const what = `${s.state === "done" ? "Solved" : "Solving"}${typed ? ` against ${esc(types.typeNoun(typed))}` : s.kind === "exploit" ? " with locks" : ""}`;
   progress.innerHTML = `
     <div class="progress"><span style="width:${(s.state === "done" ? 1 : frac) * 100}%"></span></div>
     <p class="meta">${what} ${cardsHtml(s.board, "tiny")} · iteration ${s.iteration} ·
@@ -349,6 +365,35 @@ export function openSolverAt(root, path, solution, cls) {
   goTo(root, path, solution, { keepFocus: !!cls });
 }
 
+/** What's been solved on the server, to notice solves started from the Drill. */
+const solveSig = (s) => JSON.stringify([s?.state, s?.kind, s?.solutions?.gto?.iterations, s?.solutions?.exploit?.iterations, s?.solutions?.exploit?.locks_version]);
+
+/**
+ * Catches up with what the Drill changed on the server (a player type, a solve) when the tab is
+ * shown again. A new solve opens at the decision you were looking at.
+ */
+export async function refreshSolver(root) {
+  if (!root.querySelector("#sv-main") || state.status?.state === "solving") return;
+  let s;
+  try {
+    s = await api("status");
+  } catch {
+    return;
+  }
+  if (solveSig(s) === solveSig(state.status) || s.state === "idle") {
+    state.status = s;
+    renderLocks(root);
+    return;
+  }
+  if (state.node) state.resume = state.path;
+  state.node = null;
+  state.editor = null;
+  root.querySelector("#sv-nav").innerHTML = "";
+  root.querySelector("#sv-detail").innerHTML = "";
+  root.querySelector("#sv-main").innerHTML = `<p class="hint">${s.state === "solving" ? "Solving…" : "Loading…"}</p>`;
+  handleStatus(root, s);
+}
+
 async function refreshStatus(root) {
   state.status = await api("status");
   renderLocks(root);
@@ -397,6 +442,8 @@ function render(root) {
   const { freq } = rangeFrequencies(nodeHands(node), k);
   const cmp = node.compare && rangeFrequencies(nodeHands({ ...node, hands: node.compare.hands }), k).freq;
   const lock = matchingLock();
+  // In the exploit solve the player type's own decisions are fixed, so there's nothing to drill.
+  const typedHere = state.solution === "exploit" && solvedType()?.player === node.player;
   here.innerHTML = `
     <p class="who"><b>${esc(name(node.player))}</b> to act · pot ${node.pot_bb}bb${node.to_call_bb ? ` · facing ${node.to_call_bb}bb` : ""}</p>
     ${lockBadge(node, lock)}
@@ -411,7 +458,7 @@ function render(root) {
       ${lock ? `<button class="link" id="sv-unlock">Remove lock</button>` : ""}
     </div>` : ""}
     ${state.onDrill ? `<div class="drillbar">
-      <button class="secondary" id="sv-drill">Drill this decision</button>
+      ${typedHere ? "" : `<button class="secondary" id="sv-drill">Drill this decision</button>`}
       <button class="link" id="sv-drill-hands">Play whole hands in the Drill</button>
     </div>` : ""}`;
   here.querySelector(".actions").onclick = (e) => {
@@ -423,13 +470,10 @@ function render(root) {
   if (lockBtn) lockBtn.onclick = () => (state.editor ? closeEditor(root) : openEditor(root, lock));
   const unlockBtn = here.querySelector("#sv-unlock");
   if (unlockBtn) unlockBtn.onclick = () => removeLock(root, lock.id);
-  const drillBtn = here.querySelector("#sv-drill");
-  if (drillBtn) {
-    drillBtn.onclick = () => state.onDrill({
-      live: { only: { history: historyOf(state.path), labels: state.path.map((p) => p.label) }, solution: state.solution },
-    });
-    here.querySelector("#sv-drill-hands").onclick = () => state.onDrill({ live: { only: null, solution: state.solution } });
-  }
+  here.querySelector("#sv-drill")?.addEventListener("click", () => state.onDrill({
+    live: { only: { history: historyOf(state.path), labels: state.path.map((p) => p.label) }, solution: state.solution },
+  }));
+  here.querySelector("#sv-drill-hands")?.addEventListener("click", () => state.onDrill({ live: { only: null, solution: state.solution } }));
   renderDecision(root);
 }
 
@@ -446,18 +490,25 @@ function locksCurrent() {
   return !!s?.solutions?.exploit && s.solutions.exploit.locks_version === s.locks_version;
 }
 
+/** The player type the exploit solve was made with, if any. */
+const solvedType = () => state.status?.solutions?.exploit?.profile || null;
+
 function lockBadge(node, lock) {
   let text = "";
+  const typed = solvedType();
+  const plays = typed && typed.player === node.player && `${esc(name(node.player))} plays like ${esc(types.typeNoun(typed))} here`;
   if (node.locked) {
     text = locksCurrent()
-      ? `Locked. ${esc(opponent(node.player))} adjusts to exploit it.`
-      : state.status?.locks?.length
+      ? `${!lock && plays ? plays : "Locked"}. ${esc(opponent(node.player))} adjusts to exploit it.`
+      : state.status?.locks?.length || state.status?.profile
         ? "Locked in this solve. The locks have changed since, so solve with locks again to update it."
         : "Locked in this solve. You've removed the locks since.";
   } else if (lock) {
     text = locksCurrent() && state.solution === "gto"
       ? "Locked in the exploit solve. Switch to Exploit to see it."
       : "Lock saved. Solve with locks to apply it.";
+  } else if (plays && locksCurrent() && state.solution === "gto") {
+    text = `In the exploit solve, ${plays}. Switch to Exploit to see it.`;
   }
   return text ? `<p class="lockbadge">${LOCK_ICON}<span>${text}</span></p>` : "";
 }
@@ -826,21 +877,106 @@ async function removeLock(root, id) {
   if (state.node) render(root);
 }
 
-// ---- Saved locks and the GTO / exploit comparison ------------------------------------------
+// ---- Saved locks, the player type and the GTO / exploit comparison -------------------------
+
+function loadTypePrefs() {
+  try {
+    return { player: "oop", id: types.PROFILES[0].id, strength: 1, ...JSON.parse(localStorage.getItem(PTYPE_PREFS) || "{}") };
+  } catch {
+    return { player: "oop", id: types.PROFILES[0].id, strength: 1 };
+  }
+}
+
+function saveTypePrefs(prefs) {
+  try {
+    localStorage.setItem(PTYPE_PREFS, JSON.stringify(prefs));
+  } catch {}
+}
+
+/** The player type picker: which player, which type and how strong, and how it plays. */
+function typeHtml(prof, solving) {
+  const prefs = loadTypePrefs();
+  const chosen = prof ? types.profileById(prof.id) || { id: prof.id, name: prof.name, rules: types.rulesFromList(prof.rules) } : null;
+  const player = prof?.player || prefs.player;
+  const strength = prof?.strength ?? prefs.strength;
+  const known = new Set(types.PROFILES.map((p) => p.id));
+  const options = [
+    `<option value="">None: plays GTO</option>`,
+    ...types.PROFILES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`),
+    ...(chosen && !known.has(chosen.id) ? [`<option value="${esc(chosen.id)}">${esc(chosen.name)}</option>`] : []),
+  ];
+  return `
+    <div class="ptype">
+      <label>Player type <select id="pt-type" ${solving ? "disabled" : ""}>${options.join("")}</select></label>
+      ${chosen ? `
+        <div class="row2">
+          <label>Played by <select id="pt-player" ${solving ? "disabled" : ""}>
+            <option value="oop" ${player === "oop" ? "selected" : ""}>${esc(name("oop"))}</option>
+            <option value="ip" ${player === "ip" ? "selected" : ""}>${esc(name("ip"))}</option></select></label>
+          <label>Strength <select id="pt-strength" ${solving ? "disabled" : ""}>${types.STRENGTHS.map(([v, t]) => `<option value="${v}" ${Math.abs(v - strength) < 0.01 ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+        </div>
+        <p class="meta">${esc(chosen.blurb || "A custom player type.")} ${esc(name(player))} plays like this at every decision, starting from the GTO strategy.</p>
+        <details class="ptrules" id="pt-rules"><summary>How they play compared with GTO</summary>${typeTable(chosen, strength)}</details>`
+      : `<p class="hint">Make one player play like a common type of opponent at every decision, then solve to see how to exploit them.</p>`}
+    </div>`;
+}
+
+/** The weights of a type as a table: how much more or less often than GTO, by situation. */
+function typeTable(profile, strength) {
+  const cell = (w, bluff) => {
+    const v = Math.pow(w, strength);
+    const t = types.weightText(v);
+    if (!t) return `<td class="same">·</td>`;
+    return `<td class="${v < 1 ? "less" : "more"}">${t}${bluff ? "<small>bluffs</small>" : ""}</td>`;
+  };
+  const rows = types.STREETS.map((st) => types.FACINGS.map(([f, label], i) => {
+    const c = types.cellOf(profile, st, f);
+    return `<tr>${i === 0 ? `<th rowspan="3">${st[0].toUpperCase() + st.slice(1)}</th>` : ""}<td class="sit">${label}</td>
+      ${f === "none" ? `<td class="na"></td>` : cell(c.fold)}${cell(c.passive)}${cell(c.aggressive, c.bluff)}</tr>`;
+  }).join("")).join("");
+  return `<table class="ptable">
+    <thead><tr><th></th><th></th>${types.KINDS.map(([, t]) => `<th>${t}</th>`).join("")}</tr></thead>
+    <tbody>${rows}</tbody></table>
+    <p class="hint">Each number scales how often they take that kind of action compared with GTO (· leaves it as GTO plays it), and then the frequencies are scaled back to 100%, so folding and raising less means calling more. Stronger hands are the first to continue and the weakest the first to give up; extra bluffs come from the weakest hands. An action GTO never takes stays at 0%.</p>`;
+}
+
+async function saveType(root, change) {
+  const prefs = { ...loadTypePrefs(), ...change };
+  saveTypePrefs(prefs);
+  const err = root.querySelector("#sv-locks-error");
+  try {
+    if (!prefs.id) {
+      await api("profile/clear", {});
+    } else {
+      const s = state.status;
+      const known = types.profileById(prefs.id);
+      const prof = known || (s.profile?.id === prefs.id ? { id: s.profile.id, name: s.profile.name, rules: types.rulesFromList(s.profile.rules) } : null);
+      if (!prof) return;
+      await api("profile", types.profileRequest(prof, prefs.player, +prefs.strength));
+    }
+  } catch (e) {
+    if (err) err.textContent = e.message;
+    return;
+  }
+  await refreshStatus(root);
+  if (state.node) render(root);
+}
 
 function renderLocks(root) {
   const el = root.querySelector("#sv-locks");
   const s = state.status;
   if (!el || !s) return;
   const locks = s.locks || [];
+  const prof = s.profile || null;
   const ex = s.solutions?.exploit;
   const gto = s.solutions?.gto;
-  if (!locks.length && !ex) {
+  if (!locks.length && !ex && !prof && !gto) {
     el.innerHTML = "";
     return;
   }
   const solving = s.state === "solving";
   const current = locksCurrent();
+  const typed = ex?.profile;
   const evLine = () => {
     const side = (p, i) => {
       const d = ex.root_ev_bb[i] - gto.root_ev_bb[i];
@@ -848,14 +984,19 @@ function renderLocks(root) {
     };
     return `<p class="meta">EV for the whole hand, GTO → exploit: ${side("oop", 0)} · ${side("ip", 1)}</p>`;
   };
+  let solveText = "";
+  if (current) solveText = "Solve again with locks";
+  else if (prof && locks.length) solveText = `Solve against ${types.typeNoun(prof)} and ${locks.length === 1 ? "your lock" : `your ${locks.length} locks`}`;
+  else if (prof) solveText = `Solve against ${types.typeNoun(prof)}`;
+  else if (locks.length) solveText = locks.length === 1 ? "Solve with this lock" : `Solve with these ${locks.length} locks`;
+  const drillType = typed && current && !solving && state.onDrill;
   el.innerHTML = `
     <div class="locks">
-      <h3>${LOCK_ICON}Locks <small>${locks.length}</small></h3>
-      ${locks.length ? `<ul>${locks.map(lockItem).join("")}</ul>` : `<p class="hint">No saved locks. The exploit solve used locks you've removed since.</p>`}
-      ${locks.length ? `<button class="primary" id="sv-solve-locks" ${solving ? "disabled" : ""}>${
-        current ? "Solve again with locks" : locks.length === 1 ? "Solve with this lock" : `Solve with these ${locks.length} locks`
-      }</button>` : ""}
-      ${locks.length && ex && !current && !solving ? `<p class="meta">The locks have changed since the last solve with locks.</p>` : ""}
+      <h3>${LOCK_ICON}Locks <small>${locks.length + (prof ? 1 : 0)}</small></h3>
+      ${gto || prof ? typeHtml(prof, solving) : ""}
+      ${locks.length ? `<ul>${locks.map(lockItem).join("")}</ul>` : prof || !ex ? "" : `<p class="hint">No saved locks. The exploit solve used locks you've removed since.</p>`}
+      ${solveText ? `<button class="primary" id="sv-solve-locks" ${solving ? "disabled" : ""}>${esc(solveText)}</button>` : ""}
+      ${(locks.length || prof) && ex && !current && !solving ? `<p class="meta">The locks have changed since the last solve with locks.</p>` : ""}
       <p class="error" id="sv-locks-error"></p>
       ${ex && gto && !solving ? `
         <div class="tabs" id="sv-sol">
@@ -863,8 +1004,23 @@ function renderLocks(root) {
           <button data-sol="gto" class="${state.solution === "gto" ? "active" : ""}">GTO</button>
         </div>
         ${evLine()}` : ""}
+      ${drillType ? `<button class="secondary" id="sv-drill-type">Drill against ${esc(types.typeNoun(typed))}</button>` : ""}
     </div>`;
 
+  const typeSel = el.querySelector("#pt-type");
+  if (typeSel) {
+    typeSel.value = prof?.id || "";
+    typeSel.onchange = () => saveType(root, { id: typeSel.value });
+    const player = el.querySelector("#pt-player");
+    if (player) player.onchange = () => saveType(root, { id: typeSel.value, player: player.value });
+    const strength = el.querySelector("#pt-strength");
+    if (strength) strength.onchange = () => saveType(root, { id: typeSel.value, strength: +strength.value });
+    const rules = el.querySelector("#pt-rules");
+    if (rules) {
+      rules.open = !!state.rulesOpen;
+      rules.ontoggle = () => (state.rulesOpen = rules.open);
+    }
+  }
   el.querySelector("ul")?.addEventListener("click", (e) => {
     const remove = e.target.closest("[data-remove]")?.dataset.remove;
     if (remove) return removeLock(root, +remove);
@@ -896,6 +1052,7 @@ function renderLocks(root) {
     const sol = e.target.dataset.sol;
     if (sol && sol !== state.solution && state.node) goTo(root, state.path, sol, { keepFocus: true });
   });
+  el.querySelector("#sv-drill-type")?.addEventListener("click", () => state.onDrill({ live: { only: null, solution: "exploit" } }));
 }
 
 function lockItem(l) {

@@ -151,7 +151,7 @@ impl HandKey {
 }
 
 /// Scales non-negative weights to add up to 1, or `None` when they add up to 0.
-fn normalized(v: &[f64]) -> Option<Vec<f64>> {
+pub(crate) fn normalized(v: &[f64]) -> Option<Vec<f64>> {
     let clean: Vec<f64> = v.iter().map(|&x| if x.is_finite() && x > 0.0 { x } else { 0.0 }).collect();
     let sum: f64 = clean.iter().sum();
     (sum > 0.0).then(|| clean.iter().map(|x| x / sum).collect())
@@ -169,7 +169,7 @@ fn check_mix(v: &[f64], k: usize) -> Result<Vec<f64>, String> {
 }
 
 /// Range-wide action frequencies, weighting each hand by how often it gets here.
-fn frequencies(w: &[f64], s: &[Vec<f64>], k: usize) -> Vec<f64> {
+pub(crate) fn frequencies(w: &[f64], s: &[Vec<f64>], k: usize) -> Vec<f64> {
     let total: f64 = w.iter().sum();
     (0..k)
         .map(|a| {

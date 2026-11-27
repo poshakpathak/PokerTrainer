@@ -22,6 +22,8 @@
   --suit-c: #2e9d5b;
   --lock: #8a5cf6;
   --lock-bg: #f1ecfe;
+  --less: #1d5fc9;
+  --more: #b4461d;
   color-scheme: light;
 }
 
@@ -36,6 +38,8 @@
     --suit-s: #e8eaee;
     --lock: #a98bfa;
     --lock-bg: #2a2340;
+    --less: #7aa7f5;
+    --more: #f29a6b;
     color-scheme: dark;
   }
 }
@@ -379,6 +383,28 @@ table.leaks td:first-child { white-space: normal; }
 .drill .table h3 { margin-top: 16px; text-align: left; }
 .drill .table > .combos, .drill .table > .meta { text-align: left; }
 .drillbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 6px 0; }
+
+/* Player types */
+.ptype { margin: 2px 0 12px; }
+.ptype .meta { margin: -2px 0 8px; }
+.ptrules summary { font-size: 12px; margin-bottom: 6px; }
+table.ptable { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 6px; }
+table.ptable th { text-align: center; font-size: 11px; font-weight: 600; color: var(--muted); padding: 3px 4px; }
+table.ptable tbody th { text-align: left; vertical-align: top; color: var(--text); border-top: 1px solid var(--line); }
+table.ptable td { padding: 3px 4px; border-top: 1px solid var(--line); text-align: center; white-space: nowrap; }
+table.ptable td.sit { text-align: left; color: var(--muted); }
+table.ptable td.less { color: var(--less); font-weight: 600; }
+table.ptable td.more { color: var(--more); font-weight: 600; }
+table.ptable td.same, table.ptable td.na { color: var(--muted); }
+table.ptable td small { display: block; font-size: 10px; font-weight: 400; color: var(--muted); }
+#sv-drill-type { margin-top: 8px; }
+.typesolve { margin: 2px 0 10px; }
+.typesolve .error:empty { display: none; }
+table.combos td.gtocol { color: var(--muted); }
+.vsgto {
+  margin: 6px 0 10px; padding: 6px 10px; border-left: 3px solid var(--lock); border-radius: 0 6px 6px 0;
+  background: var(--lock-bg); font-size: 13px;
+}
 
 /* Simple strategies (Study and Postflop solver) and the Simplify tab */
 .simple { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }

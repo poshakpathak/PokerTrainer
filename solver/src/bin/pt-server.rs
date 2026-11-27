@@ -2,7 +2,7 @@
 //!
 //! It serves the web app and a small JSON API, so you can solve any spot on demand, browse the
 //! whole game tree (flop, turn and river) in the browser, and lock how one player plays at any
-//! decision to find the best way to exploit them.
+//! decision, or at every decision as a player type, to find the best way to exploit them.
 //!
 //! Usage:
 //!   pt-server [--web ../web] [--port 8080] [--max-memory-gb 8] [--threads N]
@@ -16,7 +16,9 @@
 //!   POST /api/lock/preview  {history, solution, targets, hands, order}  the strategy a lock would set
 //!   POST /api/locks/add     {history, solution, targets, hands, order, wild, keep_path, label, crumbs}
 //!   POST /api/locks/remove  {id}
-//!   POST /api/locks/clear
+//!   POST /api/locks/clear   removes the locks and the player type
+//!   POST /api/profile       {player, profile}  play one player as a player type everywhere
+//!   POST /api/profile/clear
 //!   POST /api/preflop/solve     {config, max_iters, target_mbb}  start a 6-max preflop solve
 //!   GET  /api/preflop/status    its progress
 //!   POST /api/preflop/stop      stop early and keep the current strategy
@@ -39,6 +41,7 @@ use postflop_solver::*;
 use pt_solver::locks::{self, LockedNode, Recipe};
 use pt_solver::multiway::service::Service as MultiwayService;
 use pt_solver::preflop::{equity::default_cache_path, service::Service as PreflopService};
+use pt_solver::profile::{self, Profile};
 use pt_solver::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -56,6 +59,14 @@ const CHECK_EVERY: u32 = 10;
 /// The most decisions the saved locks can cover together. A river lock on every turn and river
 /// card of a flop solve covers about 2,400.
 const MAX_LOCKED_NODES: usize = 10_000;
+
+/// Decisions a player type locks between letting other requests use the GTO solution.
+const PROFILE_CHUNK: usize = 400;
+
+/// The memory a player type's locks take, as a share of the game's. They hold one player's
+/// strategy at every decision as 32-bit floats; the game stores both players' strategies and
+/// regrets in 16 bits. Measured at 0.33 to 0.52 on the bundled spots.
+const PROFILE_MEMORY: f64 = 0.55;
 
 #[derive(Deserialize)]
 struct SolveRequest {
@@ -121,6 +132,21 @@ struct RemoveLockRequest {
     id: u64,
 }
 
+#[derive(Deserialize)]
+struct ProfileRequest {
+    /// "oop" or "ip".
+    player: String,
+    profile: Profile,
+}
+
+fn player_name(p: usize) -> &'static str {
+    if p == 0 {
+        "oop"
+    } else {
+        "ip"
+    }
+}
+
 /// Which solution: the last solve without locks, or the last one with them.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 enum Kind {
@@ -167,6 +193,9 @@ struct Status {
     note: Option<String>,
     board: String,
     spot: Option<Value>,
+    /// "profile" while a player type's locks are being set up, before the solve starts.
+    phase: Option<&'static str>,
+    phase_progress: f64,
 }
 
 impl Status {
@@ -184,6 +213,8 @@ impl Status {
             "note": self.note,
             "board": self.board,
             "spot": self.spot,
+            "phase": self.phase,
+            "phase_progress": round(self.phase_progress, 3),
         })
     }
 }
@@ -202,6 +233,9 @@ struct Solved {
     iterations: u32,
     /// For an exploit solve, the version of the saved locks it used.
     locks_version: u64,
+    /// For an exploit solve with a player type: who played it, which one, and how many
+    /// decisions it locked.
+    profile: Value,
 }
 
 impl Solved {
@@ -212,6 +246,7 @@ impl Solved {
             "iterations": self.iterations,
             "memory_gb": round(self.memory_gb, 2),
             "locks_version": self.locks_version,
+            "profile": self.profile,
         })
     }
 }
@@ -321,7 +356,27 @@ impl Lock {
     }
 }
 
-/// The saved locks. They belong to one tree (`key`); solving a different spot clears them.
+/// A player type one player plays at every decision.
+#[derive(Clone)]
+struct ProfileLock {
+    player: usize,
+    profile: Profile,
+}
+
+impl ProfileLock {
+    fn json(&self) -> Value {
+        json!({
+            "player": player_name(self.player),
+            "id": self.profile.id,
+            "name": self.profile.name,
+            "strength": self.profile.strength,
+            "rules": self.profile.rules,
+        })
+    }
+}
+
+/// The saved locks and player type. They belong to one tree (`key`); solving a different spot
+/// clears them.
 #[derive(Default)]
 struct LockSet {
     key: String,
@@ -329,6 +384,7 @@ struct LockSet {
     version: u64,
     next_id: u64,
     locks: Vec<Lock>,
+    profile: Option<ProfileLock>,
 }
 
 impl LockSet {
@@ -336,21 +392,40 @@ impl LockSet {
         self.locks.iter().map(Lock::summary).collect()
     }
 
+    fn is_empty(&self) -> bool {
+        self.locks.is_empty() && self.profile.is_none()
+    }
+
+    fn clear(&mut self) {
+        if !self.is_empty() {
+            self.locks.clear();
+            self.profile = None;
+            self.version += 1;
+        }
+    }
+
     /// Every locked decision in the order to apply them: the kept earlier decisions first, then
     /// the locks from the most general (most "every card" steps) to the most specific, so the
-    /// more specific lock wins where two overlap.
+    /// more specific lock wins where two overlap. A player with a player type keeps playing it
+    /// on the way to their locks, so their kept earlier decisions are left out.
     fn ordered_nodes(&self) -> Vec<LockedNode> {
+        let typed = self.profile.as_ref().map(|p| p.player);
         let mut by_generality: Vec<&Lock> = self.locks.iter().collect();
         by_generality.sort_by_key(|l| std::cmp::Reverse(l.wild.len()));
         self.locks
             .iter()
+            .filter(|l| Some(l.player) != typed)
             .flat_map(|l| l.path.iter().cloned())
             .chain(by_generality.iter().flat_map(|l| l.nodes.iter().cloned()))
             .collect()
     }
 
     fn json(&self) -> Value {
-        json!({ "locks": self.summaries(), "locks_version": self.version })
+        json!({
+            "locks": self.summaries(),
+            "locks_version": self.version,
+            "profile": self.profile.as_ref().map(ProfileLock::json),
+        })
     }
 }
 
@@ -429,23 +504,43 @@ impl App {
         let req: SolveRequest = serde_json::from_value(raw.clone()).map_err(|e| bad(e.to_string()))?;
         let key = tree_key(&req.spot, &req.board);
         if req.locks {
-            if self.locks.locks.is_empty() {
+            if self.locks.is_empty() {
                 return Err(bad("There are no saved locks to solve with."));
             }
             if self.locks.key != key {
                 return Err(bad("The saved locks were made for a different spot or board."));
             }
         }
+        // A player type is built from the GTO solution, so that has to stay in memory too.
+        let profile_job = if req.locks { self.locks.profile.clone() } else { None };
 
         let (mut game, starting_pot) = build_game(&req.spot, &req.board).map_err(bad)?;
         let (_, mem_compressed) = game.memory_usage();
         let memory_gb = mem_compressed as f64 / 1e9;
-        if memory_gb > self.max_memory_gb {
+        let lock_gb = if profile_job.is_some() { memory_gb * PROFILE_MEMORY } else { 0.0 };
+        if memory_gb + lock_gb > self.max_memory_gb {
             return Err(bad(format!(
-                "This tree needs {memory_gb:.1} GB of memory, over the {:.1} GB limit. Use fewer bet sizes, \
+                "This tree needs {:.1} GB of memory, over the {:.1} GB limit. Use fewer bet sizes, \
                  narrower ranges, or start pt-server with a higher --max-memory-gb.",
+                memory_gb + lock_gb,
                 self.max_memory_gb
             )));
+        }
+        if profile_job.is_some() {
+            let sols = self.solutions.lock().unwrap();
+            let gto_gb = match &sols.gto {
+                Some(g) if g.key == key => g.memory_gb,
+                _ => return Err(bad("Solve the spot without locks first: a player type starts from the GTO strategy.")),
+            };
+            let need = gto_gb + memory_gb + lock_gb;
+            if need > self.max_memory_gb {
+                return Err(bad(format!(
+                    "A player type needs the GTO solution, the exploit solution and its own locks in memory at once: \
+                     about {need:.1} GB here, over the {:.1} GB limit. Start pt-server with a higher --max-memory-gb, \
+                     or use fewer bet sizes or narrower ranges.",
+                    self.max_memory_gb
+                )));
+            }
         }
 
         if memory_gb + self.multiway.memory_gb() > self.max_memory_gb {
@@ -465,7 +560,7 @@ impl App {
             if let Some(o) = other.as_ref() {
                 if o.key != key {
                     *other = None;
-                } else if o.memory_gb + memory_gb > self.max_memory_gb {
+                } else if o.memory_gb + memory_gb + lock_gb > self.max_memory_gb {
                     *other = None;
                     note = Some(format!(
                         "There isn't room under --max-memory-gb for both solutions, so the {} one was dropped \
@@ -476,10 +571,7 @@ impl App {
             }
         }
         if self.locks.key != key {
-            if !self.locks.locks.is_empty() {
-                self.locks.locks.clear();
-                self.locks.version += 1;
-            }
+            self.locks.clear();
             self.locks.key = key.clone();
         }
         let lock_nodes = if req.locks { self.locks.ordered_nodes() } else { Vec::new() };
@@ -490,10 +582,11 @@ impl App {
             kind,
             max_iters: req.max_iters,
             target_pct: req.accuracy,
-            memory_gb,
+            memory_gb: memory_gb + lock_gb,
             note,
             board: req.board.clone(),
             spot: Some(raw["spot"].clone()),
+            phase: profile_job.as_ref().map(|_| "profile"),
             ..Default::default()
         };
 
@@ -504,15 +597,50 @@ impl App {
         self.worker_kind = kind;
         self.worker = Some(std::thread::spawn(move || {
             let t0 = Instant::now();
+            let fail = |msg: String| {
+                let mut s = status.lock().unwrap();
+                s.state = "failed";
+                s.phase = None;
+                s.error = Some(msg);
+            };
             game.allocate_memory(true);
             // Locks go on after memory is allocated and before solving.
             for node in &lock_nodes {
                 if let Err(e) = locks::apply(&mut game, node) {
-                    let mut s = status.lock().unwrap();
-                    s.state = "failed";
-                    s.error = Some(format!("Couldn't apply the locks: {e}"));
-                    return;
+                    return fail(format!("Couldn't apply the locks: {e}"));
                 }
+            }
+            // Then the player type, on every decision of that player not locked by hand, built
+            // from the GTO solution a chunk at a time so the server can answer in between.
+            let mut memory_gb = memory_gb;
+            let mut profile_summary = Value::Null;
+            if let Some(p) = profile_job {
+                let mut builder = profile::Builder::new(p.profile.clone(), p.player);
+                while !builder.done() {
+                    if cancel.load(Ordering::SeqCst) {
+                        return fail("Stopped while setting up the player type.".into());
+                    }
+                    let res = {
+                        let mut sols = solutions.lock().unwrap();
+                        match sols.gto.as_mut() {
+                            Some(g) if g.key == key => builder.step(&mut g.game, &mut game, PROFILE_CHUNK),
+                            _ => Err("The GTO solution the player type is built from is gone.".into()),
+                        }
+                    };
+                    if let Err(e) = res {
+                        return fail(format!("Couldn't set up the player type: {e}"));
+                    }
+                    let mut s = status.lock().unwrap();
+                    s.phase_progress = builder.progress;
+                    s.elapsed_s = t0.elapsed().as_secs_f64();
+                }
+                memory_gb += builder.bytes as f64 / 1e9;
+                let mut summary = p.json();
+                summary["nodes"] = json!(builder.locked);
+                profile_summary = summary;
+                let mut s = status.lock().unwrap();
+                s.phase = None;
+                s.memory_gb = memory_gb;
             }
             game.back_to_root();
 
@@ -557,12 +685,13 @@ impl App {
                 exploitability_pct: expl_pct,
                 iterations: iteration,
                 locks_version,
+                profile: profile_summary,
             });
             let mut s = status.lock().unwrap();
             s.state = "done";
             s.elapsed_s = t0.elapsed().as_secs_f64();
         }));
-        Ok(json!({ "ok": true, "memory_gb": round(memory_gb, 2), "kind": kind.name() }))
+        Ok(json!({ "ok": true, "memory_gb": round(memory_gb + lock_gb, 2), "kind": kind.name() }))
     }
 
     fn status_json(&self) -> Value {
@@ -574,6 +703,7 @@ impl App {
         });
         v["locks"] = json!(self.locks.summaries());
         v["locks_version"] = json!(self.locks.version);
+        v["profile"] = json!(self.locks.profile.as_ref().map(ProfileLock::json));
         v
     }
 
@@ -709,7 +839,7 @@ impl App {
         let mut sols = self.solutions.lock().unwrap();
         let kind = sols.pick(req.solution.as_deref(), latest)?;
         let solved = sols.slot(kind).as_mut().unwrap();
-        if !self.locks.locks.is_empty() && self.locks.key != solved.key {
+        if !self.locks.is_empty() && self.locks.key != solved.key {
             return Err((409, "The saved locks are for a different spot. Clear them first.".into()));
         }
         let starting_pot = solved.starting_pot;
@@ -797,7 +927,7 @@ impl App {
             )));
         }
 
-        if self.locks.locks.is_empty() {
+        if self.locks.is_empty() {
             self.locks.key = solved.key.clone();
         }
         match replaces {
@@ -827,8 +957,38 @@ impl App {
     }
 
     fn lock_clear(&mut self) -> ApiResult {
-        if !self.locks.locks.is_empty() {
-            self.locks.locks.clear();
+        self.locks.clear();
+        Ok(self.locks.json())
+    }
+
+    /// Sets the player type one player plays at every decision, replacing any other. It's
+    /// built from the GTO solution when the spot is solved with locks.
+    fn profile_set(&mut self, body: &str) -> ApiResult {
+        let req: ProfileRequest = serde_json::from_str(body).map_err(|e| bad(e.to_string()))?;
+        let player = match req.player.as_str() {
+            "oop" => 0,
+            "ip" => 1,
+            p => return Err(bad(format!("player must be \"oop\" or \"ip\", not {p:?}"))),
+        };
+        let profile = req.profile.checked().map_err(bad)?;
+        let key = {
+            let sols = self.solutions.lock().unwrap();
+            match &sols.gto {
+                Some(g) => g.key.clone(),
+                None => return Err((409, "Solve the spot without locks first: a player type starts from the GTO strategy.".into())),
+            }
+        };
+        if !self.locks.is_empty() && self.locks.key != key {
+            return Err((409, "The saved locks are for a different spot. Clear them first.".into()));
+        }
+        self.locks.key = key;
+        self.locks.profile = Some(ProfileLock { player, profile });
+        self.locks.version += 1;
+        Ok(self.locks.json())
+    }
+
+    fn profile_clear(&mut self) -> ApiResult {
+        if self.locks.profile.take().is_some() {
             self.locks.version += 1;
         }
         Ok(self.locks.json())
@@ -880,6 +1040,8 @@ impl App {
             (Method::Post, "/api/locks/add") => self.lock_add(&body),
             (Method::Post, "/api/locks/remove") => self.lock_remove(&body),
             (Method::Post, "/api/locks/clear") => self.lock_clear(),
+            (Method::Post, "/api/profile") => self.profile_set(&body),
+            (Method::Post, "/api/profile/clear") => self.profile_clear(),
             _ => Err((404, "not found".to_string())),
         };
         let resp = match result {
