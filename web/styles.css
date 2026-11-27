@@ -379,3 +379,56 @@ table.leaks td:first-child { white-space: normal; }
 .drill .table h3 { margin-top: 16px; text-align: left; }
 .drill .table > .combos, .drill .table > .meta { text-align: left; }
 .drillbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 6px 0; }
+
+/* Simple strategies (Study and Postflop solver) and the Simplify tab */
+.simple { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.levels { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px; margin-bottom: 12px; }
+.levels button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 7px 9px; text-align: left;
+  font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
+}
+.levels button b { font-size: 13px; font-weight: 600; }
+.levels button small { font-size: 11px; color: var(--muted); }
+.levels button:hover { border-color: var(--accent); }
+.levels button.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--panel); }
+.rulelines { list-style: none; padding: 0; margin: 0 0 10px; font-size: 14px; }
+.rulelines li { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.rulelines li:last-child { border-bottom: 0; }
+.rulelines li > i { flex: none; width: 10px; height: 10px; border-radius: 2px; align-self: flex-start; margin-top: 5px; }
+.rulelines li b { flex: 0 0 auto; min-width: 120px; max-width: 45%; font-weight: 600; }
+.rulelines .mini { display: inline-flex; flex: none; width: 10px; height: 10px; margin: 5px 0 0; align-self: flex-start; border-radius: 2px; overflow: hidden; }
+.rulelines .mini span { display: block; height: 100%; }
+.evsum { margin: 6px 0 8px; font-size: 13px; }
+.cautions { list-style: none; padding: 6px 9px; margin: 0 0 10px; border-radius: 6px; background: var(--bg); font-size: 12px; color: var(--muted); }
+.cautions li + li { margin-top: 4px; }
+p.cautions.warn { color: var(--text); border-left: 3px solid var(--ok); }
+.cmpbars { margin: 10px 0 12px; }
+.cmpbars > div { display: grid; grid-template-columns: 52px 1fr; align-items: center; gap: 8px; }
+.cmpbars > div span { font-size: 12px; color: var(--muted); }
+.cmpbars .freqbar { margin: 3px 0; }
+.cmpbars .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+.cmpbars .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+.cmpbars .legend b { color: var(--text); }
+.freqbar.slim { height: 6px; margin: 2px 0; min-width: 60px; }
+table.types { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
+table.types th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px; white-space: nowrap; }
+table.types td { padding: 5px 4px; border-top: 1px solid var(--line); vertical-align: top; }
+table.types td small { display: block; color: var(--muted); font-size: 11px; }
+table.types td:nth-child(2), table.types td:last-child { white-space: nowrap; }
+table.types tbody tr { cursor: pointer; }
+table.types tbody tr:hover td { background: var(--bg); }
+table.types tr.chosen td { background: var(--bg); box-shadow: inset 0 -1px 0 var(--accent); }
+.simpleopts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.simpleopts label { margin-bottom: 4px; }
+.simplebtns { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+table.simplecombos td small { font-size: 11px; }
+table.simplecombos td { white-space: normal; }
+.simplify #sp-main { display: grid; gap: 16px; min-width: 0; }
+.simplify .controls .simpleopts { grid-template-columns: 1fr; }
+.texcard header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; margin-bottom: 10px; }
+.texcard header h3 { margin: 0; }
+.texflops { display: flex; flex-wrap: wrap; gap: 4px; }
+.texcard details { margin-top: 8px; }
+.texcard details summary { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+table.report.flops .freqbar { width: 120px; }
+.simplify .sptitle { margin: 0; font-size: 16px; font-weight: 600; }

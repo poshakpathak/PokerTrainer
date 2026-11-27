@@ -23,6 +23,11 @@ It has three parts:
    - **Reports** compares one decision (e.g. the c-bet after a check) across every solved flop,
      sortable by action frequency and filterable by texture, so you can learn the patterns
      instead of memorizing single boards.
+   - **Simplify** turns the solver's play at one decision into a few rules you can use at the
+     table (one bet size, and bet, check or mix by hand type), per board texture across every
+     solved flop, and shows how much EV the rules give up. The **Simple** tab in Study and the
+     Postflop solver does the same for the decision on screen (see
+     [Simple strategies](#simple-strategies)).
    - **Preflop solver** shows GTO preflop ranges for 6-max cash games: every seat's opens,
      3-bets, 4-bets and calls as 13×13 grids, with the EV of every hand and action. Browse the
      bundled charts, or solve your own stack depth, bet sizes and rake with the local server.
@@ -63,6 +68,12 @@ python3 -m http.server 8000
 
 Any static file server works (the page fetches `data/*.json`, so opening `index.html`
 directly from disk won't). You can also publish the `web/` folder with GitHub Pages.
+
+The web app's tests run with Node 22 or later, from the repo root:
+
+```sh
+node --test "tests/*.test.mjs"
+```
 
 ## Drill
 
@@ -131,6 +142,51 @@ hand, every action shows its frequency in the other solution, and the hand detai
 other solution's row for the hovered hand class. Locks belong to the spot and board they were
 made on: solving a different spot clears them, and they're kept in the server's memory, so
 restarting pt-server clears them too. Both solutions have to fit under `--max-memory-gb`.
+
+## Simple strategies
+
+A solver mixes most hands between several sizes, which you can't copy at the table. The
+simplifier finds a strategy you can actually play and tells you what it costs:
+
+- **One bet size, by hand type**: drop the other sizes and give each hand type one rule.
+- **Every size, by hand type**: the same rules, keeping every size the solver uses.
+- **One action with every hand**: e.g. a range bet, when that's nearly as good.
+
+Hand types are two pair or better, overpairs, top pair with a good kicker (one of the three best
+kickers not on the board) or a weak one, second pair, weak pairs, strong draws (flush draws and
+open-enders), weak draws (gutshots and backdoor flush draws), ace high and air. A hand type gets
+the action the solver takes most with it. If that leaves the range's frequencies more than 5
+points off the solver's, the hand types that help most get a closer rule: a split on something
+you can see at a glance ("bet with a backdoor flush draw, otherwise check") or a mix in quarters
+("bet half the time"). The **Rules** option picks fewer or more of those. Hands that the solver
+bets in a size you dropped bet the kept size instead, or check if that's worth more to them.
+
+**Simple tab.** In Study and the Postflop solver, the Simple tab above the grid shows each
+simple strategy with the EV it gives up, and recommends the simplest one within 1% of the pot
+(0.5% and 2% are options). The grid colors every hand by its rule, hovering a cell shows each
+combo's hand type, the solver's play and the rule's, and the hand type table shows how the
+solver plays each type, the rule, and what it costs. **Copy rules** copies them as text.
+
+**Simplify tab.** Pick a spot and a decision (e.g. BTN's c-bet after BB checks) to get one set
+of rules for every solved flop, and one per board texture: monotone, paired, ace high, two or
+more broadways, connected, king to jack high and dry, ten high or lower and dry. Each texture's
+rules are made from the solver's play on all its flops, and scored on each one: the card shows
+the average and the worst flop, and **Each flop** opens any of them in Study.
+
+**What "gives up" means.** The solver exports every hand's EV for every action, so the loss is
+what each hand gets with the rule against what it gets with the solver's mix, weighted by how
+often it gets there, as a share of the pot. That holds the other player's strategy fixed. A
+player who adjusts to your simple strategy can take back more, so treat it as a lower bound;
+a note appears when a rule moves your range's frequencies 20 points or more, or puts 10% or
+more of the range in a size the solver hardly uses. A solve that isn't fully converged can make
+a simple rule look as good as the solver or slightly better: below the solve's own precision
+the numbers say "within the solve's precision", and decisions the solver rarely reaches get a
+warning that their numbers are rough.
+
+**Check it against an opponent who adjusts.** In the Postflop solver, **Lock this simple
+strategy** on the Simple tab saves a lock (see [Node locking](#node-locking)) with every combo
+on its rule. Click **Solve with this lock**, and the Locks panel shows each player's EV for the
+whole hand, GTO against the solve where the other player adjusts to your rules.
 
 ## Preflop solver
 

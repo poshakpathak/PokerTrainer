@@ -5,11 +5,13 @@ import { initMultiway, prefillMultiway } from "./multiway.js";
 import { initReports } from "./reports.js";
 import { initSolver, prefillSolver, openSolverAt } from "./solver.js";
 import { initPreflopSolver, openPreflopAt } from "./pfsolver.js";
+import { initSimplify } from "./simplifyview.js";
 
 const views = {
   drill: document.getElementById("view-drill"),
   study: document.getElementById("view-study"),
   reports: document.getElementById("view-reports"),
+  simplify: document.getElementById("view-simplify"),
   pfsolver: document.getElementById("view-pfsolver"),
   solver: document.getElementById("view-solver"),
   multiway: document.getElementById("view-multiway"),
@@ -31,9 +33,9 @@ function show(name) {
   return started[name];
 }
 
-async function openStudy(spot, flop, path, cls) {
+async function openStudy(spot, flop, path, cls, mode) {
   await show("study");
-  await openInStudy(views.study, spot, flop, path, cls);
+  await openInStudy(views.study, spot, flop, path, cls, mode);
 }
 
 /** Opens a pot from the preflop solver in the postflop Solver, ready for a board. */
@@ -74,6 +76,7 @@ function start(name) {
   if (name === "multiway") return initMultiway(views.multiway);
   if (name === "pfsolver") return initPreflopSolver(views.pfsolver, { onOpenSolver: openSolver, onOpenMultiway: openMultiway, onDrill: drill });
   if (name === "reports") return initReports(views.reports, { onOpenStudy: openStudy });
+  if (name === "simplify") return initSimplify(views.simplify, { onOpenStudy: openStudy });
   return initDrill(views.drill, { onOpenStudy: openStudy, onOpenSolver: openSolverNode, onOpenPreflop: openPreflop });
 }
 

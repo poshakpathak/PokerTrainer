@@ -118,12 +118,13 @@ function showDetail(el, node, c, cls, view, cmp) {
     }</p>`;
 }
 
-/** Strategy / EV / Equity tab markup and wiring. */
-export function modeTabsHtml(id) {
+/** Strategy / EV / Equity tab markup and wiring, plus Simple (simplifyview.js) where it's offered. */
+export function modeTabsHtml(id, { simple = false } = {}) {
   return `<div class="tabs" id="${id}">
     <button data-mode="strategy" class="active">Strategy</button>
     <button data-mode="ev">EV</button>
     <button data-mode="equity">Equity</button>
+    ${simple ? `<button data-mode="simple" title="A few simple rules for this decision, and the EV they give up">Simple</button>` : ""}
   </div>`;
 }
 

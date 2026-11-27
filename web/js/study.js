@@ -3,9 +3,10 @@
 import { cardsHtml } from "./cards.js";
 import { loadIndex, loadSolution, nodeHands, rangeFrequencies, actionText, actionColor } from "./data.js";
 import { renderNodeView, modeTabsHtml, wireModeTabs } from "./nodeview.js";
+import { renderSimple } from "./simplifyview.js";
 
 const state = { spot: null, flop: null, sol: null, node: null };
-const view = { mode: "strategy", focus: null, pinned: false };
+const view = { mode: "strategy", focus: null, pinned: false, level: null, type: null };
 
 export async function initStudy(root) {
   root.innerHTML = `
@@ -21,9 +22,10 @@ export async function initStudy(root) {
         <div id="st-actions" class="actions"></div>
       </aside>
       <section class="panel">
-        ${modeTabsHtml("st-mode")}
+        ${modeTabsHtml("st-mode", { simple: true })}
         <div id="st-grid"></div>
         <p id="st-range" class="meta"></p>
+        <div id="st-simple"></div>
       </section>
       <aside class="panel detail" id="st-detail"></aside>
     </div>`;
@@ -42,10 +44,17 @@ export async function initStudy(root) {
   await selectSpot(root, index, spots[0].id);
 }
 
-/** Opens a specific spot/flop/node, used by the trainer's "open in study" link. */
-export async function openInStudy(root, spotId, flop, path, cls) {
+/**
+ * Opens a specific spot/flop/node, used by the Drill's and Simplify's links. `mode` picks the
+ * tab above the grid, e.g. "simple".
+ */
+export async function openInStudy(root, spotId, flop, path, cls, mode) {
   const index = await loadIndex();
   root.querySelector("#st-spot").value = spotId;
+  if (mode) {
+    view.mode = mode;
+    root.querySelectorAll("#st-mode button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+  }
   await selectSpot(root, index, spotId, flop);
   const node = state.sol.byPath.get(path.join(" / "));
   if (node) {
@@ -75,6 +84,7 @@ async function selectFlop(root, flop) {
 }
 
 function showNode(root, node) {
+  if (node !== state.node) view.level = null;
   state.node = node;
   const spot = state.spot;
   const name = (p) => (p === "oop" ? spot.oop : spot.ip);
@@ -119,10 +129,15 @@ function showNode(root, node) {
     }
   };
 
-  renderNodeView(
-    { grid: root.querySelector("#st-grid"), detail: root.querySelector("#st-detail"), range: root.querySelector("#st-range") },
-    node,
-    view,
-    { board: state.flop, name },
-  );
+  const els = { grid: root.querySelector("#st-grid"), detail: root.querySelector("#st-detail"), range: root.querySelector("#st-range") };
+  const simple = root.querySelector("#st-simple");
+  if (view.mode === "simple") {
+    els.range.textContent = "";
+    const line = node.path.map((label, i) => `${name(state.sol.byPath.get(node.path.slice(0, i).join(" / ")).player)} ${label}`);
+    const title = `${spot.name} · ${state.flop} · ${[...line, `${name(node.player)} to act`].join(" › ")}`;
+    renderSimple({ ...els, simple }, node, view, { board: state.flop, name, title });
+    return;
+  }
+  simple.innerHTML = "";
+  renderNodeView(els, node, view, { board: state.flop, name });
 }
