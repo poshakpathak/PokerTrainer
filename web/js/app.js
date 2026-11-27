@@ -1,15 +1,13 @@
 import { initStudy, openInStudy } from "./study.js";
-import { initTrainer } from "./trainer.js";
+import { initDrill, openDrill } from "./drill.js";
 import { initRanges } from "./ranges.js";
 import { initReports } from "./reports.js";
-import { initPreflop } from "./preflop.js";
-import { initSolver, prefillSolver } from "./solver.js";
-import { initPreflopSolver } from "./pfsolver.js";
+import { initSolver, prefillSolver, openSolverAt } from "./solver.js";
+import { initPreflopSolver, openPreflopAt } from "./pfsolver.js";
 
 const views = {
+  drill: document.getElementById("view-drill"),
   study: document.getElementById("view-study"),
-  trainer: document.getElementById("view-trainer"),
-  preflop: document.getElementById("view-preflop"),
   reports: document.getElementById("view-reports"),
   pfsolver: document.getElementById("view-pfsolver"),
   solver: document.getElementById("view-solver"),
@@ -42,20 +40,40 @@ async function openSolver(spot) {
   prefillSolver(views.solver, spot);
 }
 
+/** Opens a decision of the solve on pt-server in the postflop Solver, from the Drill. */
+async function openSolverNode({ path, solution, cls }) {
+  await show("solver");
+  openSolverAt(views.solver, path, solution, cls);
+}
+
+/** Opens a decision of a preflop chart in the Preflop solver, from the Drill. */
+async function openPreflop({ pack, history, cls }) {
+  await show("pfsolver");
+  await openPreflopAt(views.pfsolver, pack, history, cls);
+}
+
+/** Drills a spot picked in one of the solver tabs. */
+async function drill(spec) {
+  const shown = show("drill");
+  openDrill(spec);
+  await shown;
+}
+
 function start(name) {
   if (name === "study") return initStudy(views.study);
   if (name === "ranges") return initRanges(views.ranges);
-  if (name === "preflop") return initPreflop(views.preflop);
-  if (name === "solver") return initSolver(views.solver);
-  if (name === "pfsolver") return initPreflopSolver(views.pfsolver, { onOpenSolver: openSolver });
+  if (name === "solver") return initSolver(views.solver, { onDrill: drill });
+  if (name === "pfsolver") return initPreflopSolver(views.pfsolver, { onOpenSolver: openSolver, onDrill: drill });
   if (name === "reports") return initReports(views.reports, { onOpenStudy: openStudy });
-  return initTrainer(views.trainer, { onOpenStudy: openStudy });
+  return initDrill(views.drill, { onOpenStudy: openStudy, onOpenSolver: openSolverNode, onOpenPreflop: openPreflop });
 }
 
 document.querySelectorAll("header nav button").forEach((b) => (b.onclick = () => show(b.dataset.view)));
 
-let initial = "trainer";
+let initial = "drill";
 try {
   initial = localStorage.getItem("pokertrainer.view") || initial;
 } catch {}
-show(views[initial] ? initial : "trainer");
+// The Postflop trainer and Preflop drill tabs are now part of the Drill.
+if (initial === "trainer" || initial === "preflop") initial = "drill";
+show(views[initial] ? initial : "drill");

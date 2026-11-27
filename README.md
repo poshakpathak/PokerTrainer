@@ -12,12 +12,10 @@ It has three parts:
    definitions (preflop ranges, pot, stacks, bet sizes) and a script that batch-solves spots ×
    flops into `web/data/`.
 3. **Web app** (`web/`): a static site with no build step.
-   - **Postflop trainer** deals you a random hand in a solved spot, you pick an action, and it
-     scores you by EV lost against the solver. Hands you get wrong are saved, and
-     **Review mistakes** mode replays them until you answer them correctly. Stats are kept in
-     your browser.
-   - **Preflop drill** drills open-or-fold decisions from every seat against the opening charts
-     in `web/data/preflop.json`, focusing on hands near the edge of each range.
+   - **Drill** deals you spots from the solvers, preflop and postflop, and scores every
+     decision by the EV it loses against the solution. It can play whole hands against your own
+     solve, shows which situations cost you the most, and replays the hands you got wrong (see
+     [Drill](#drill)).
    - **Study** is a strategy browser: the 13×13 grid shows each hand class's action mix (or
      its EV or equity), you can step through the action tree, and hovering a cell shows every
      combo's frequencies, EVs and equity. Each node also shows both ranges' equity, EV and
@@ -61,6 +59,45 @@ python3 -m http.server 8000
 
 Any static file server works (the page fetches `data/*.json`, so opening `index.html`
 directly from disk won't). You can also publish the `web/` folder with GitHub Pages.
+
+## Drill
+
+The **Drill** tab deals you decisions and scores each one by the EV it loses against the
+solver. Pick where the spots come from:
+
+- **Preflop**: any decision in a Preflop solver chart: opens, facing an open, squeezes, facing
+  a 3-bet and facing a 4-bet or more. Pick the chart (or your last preflop solve on pt-server),
+  the situations and your seat. **Close decisions** (the default) deals only the hands the
+  solver mixes with or that sit at the edge of a range; **Every hand** deals hands as often as
+  they reach the spot.
+- **Flops**: flop decisions from the solution library: the first decision, facing a bet or
+  raise, or anywhere on the flop.
+- **Your solve**: whole hands, flop to river, on the spot you solved in the Postflop solver
+  tab. The other player is dealt a real hand from their range and plays the solver's strategy
+  for it, turn and river cards come at random, and at showdown you see what they had. Pick
+  your seat and the streets you decide on; the solver plays your hand on the others. If you've
+  also solved with locks, **Play against: Your locks** has the locked player play your locks
+  while you're scored against the best exploit. Needs pt-server.
+
+After each decision you get every action's solver frequency, EV and EV lost, how the solver
+plays every hand at that point, and a link to the same spot in the Preflop solver, Study or
+Postflop solver. Keys 1 to 9 pick an action and Space goes on.
+
+- **Grades.** An action is **Correct** if the solver takes it at least 20% of the time with
+  your hand, or it loses at most 0.5% of the pot. Otherwise it's a **Small mistake** (up to 3%
+  of the pot), a **Mistake** (up to 10%) or a **Blunder**.
+- **Leaks.** The Leaks panel groups your decisions by situation (BB facing an open, flop
+  facing a bet, river checked to you, and so on), the costliest first; click one to drill only
+  that. **Summary** shows the session's grades, its most expensive decisions and the same
+  breakdown.
+- **Review mistakes** deals the decisions you got wrong again, until you get them right.
+- **From the solver tabs.** **Drill this spot** in the Preflop solver and **Drill this
+  decision** in the Postflop solver drill that exact decision; **Play whole hands in the
+  Drill** starts hands on the Postflop solver's spot.
+
+If you take an action the solver never takes with your hand, it has no strategy for your hand
+after it, so a whole hand goes on as if you'd made the solver's play (the hand log shows
+both). A fold always ends the hand. Stats and saved mistakes are kept in your browser.
 
 ## Node locking
 
@@ -222,8 +259,8 @@ representative per texture.
   Treat the output as a solid baseline, not the final word in every spot.
 - The precomputed library only exports flop decisions. Use the Postflop solver tab to explore
   turns and rivers.
-- The library's spot ranges and the Preflop drill's opening charts are hand-written
-  approximations of 100bb 6-max ranges, not solver output.
+- The library's spot ranges are hand-written approximations of 100bb 6-max ranges, not solver
+  output.
 - The Preflop solver's charts are only as good as its postflop model: it values each hand from
   a fit to postflop solves instead of playing the flop out, so expect them to differ from
   full-game solvers by a few percent of hands at the edges of ranges. At 100bb without rake
@@ -263,7 +300,7 @@ also locks the same player's earlier decisions on the line as they are.
 
 ## Roadmap
 
-- Rebuild the library's spots and the Preflop drill from the preflop solver's ranges.
+- Rebuild the library's spots from the preflop solver's ranges.
 - Calibrate the preflop solver's postflop model on more spots and flops.
 - Aggregated turn and river reports across many flops.
 - Multiway pots.

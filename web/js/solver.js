@@ -16,6 +16,8 @@ const state = {
   editor: null, // the lock being set up at the node shown
   resume: null, // path to reopen when the running solve finishes
   polling: null,
+  goSeq: 0, // counts navigations, so a slow answer can't replace a later one
+  onDrill: null,
 };
 const view = { mode: "strategy", focus: null, pinned: false };
 const STREETS = ["flop", "turn", "river"];
@@ -63,7 +65,8 @@ async function api(path, body) {
   return data;
 }
 
-export async function initSolver(root) {
+export async function initSolver(root, { onDrill } = {}) {
+  state.onDrill = onDrill;
   let status;
   try {
     status = await api("status");
@@ -309,16 +312,19 @@ function handleStatus(root, s) {
 }
 
 async function goTo(root, path, solution = state.solution, { keepFocus = false, fallback = false } = {}) {
+  const seq = ++state.goSeq;
   const sols = state.status?.solutions || {};
   const ask = sols[solution] ? solution : undefined;
   let node;
   try {
     node = await api("node", { history: historyOf(path), solution: ask });
   } catch (e) {
+    if (seq !== state.goSeq) return;
     if (fallback && path.length) return goTo(root, [], solution);
     root.querySelector("#sv-main").innerHTML = `<p class="error">${esc(e.message)}</p>`;
     return;
   }
+  if (seq !== state.goSeq) return;
   state.path = path;
   state.node = node;
   state.solution = node.solution;
@@ -328,6 +334,17 @@ async function goTo(root, path, solution = state.solution, { keepFocus = false, 
     view.pinned = false;
   }
   render(root);
+}
+
+/** Shows the decision after `path` ([{step, label}]), with hand class `cls` pinned. Used by the Drill. */
+export function openSolverAt(root, path, solution, cls) {
+  if (!root.querySelector("#sv-main")) return; // no server: the tab shows how to start it
+  state.resume = null;
+  if (cls) {
+    view.focus = cls;
+    view.pinned = true;
+  }
+  goTo(root, path, solution, { keepFocus: !!cls });
 }
 
 async function refreshStatus(root) {
@@ -390,6 +407,10 @@ function render(root) {
     ${k > 1 ? `<div class="lockbar">
       <button class="secondary" id="sv-lock">${LOCK_ICON}${lock ? "Edit lock" : `Lock ${esc(name(node.player))}'s play here`}</button>
       ${lock ? `<button class="link" id="sv-unlock">Remove lock</button>` : ""}
+    </div>` : ""}
+    ${state.onDrill ? `<div class="drillbar">
+      <button class="secondary" id="sv-drill">Drill this decision</button>
+      <button class="link" id="sv-drill-hands">Play whole hands in the Drill</button>
     </div>` : ""}`;
   here.querySelector(".actions").onclick = (e) => {
     const i = e.target.closest("button")?.dataset.i;
@@ -400,6 +421,13 @@ function render(root) {
   if (lockBtn) lockBtn.onclick = () => (state.editor ? closeEditor(root) : openEditor(root, lock));
   const unlockBtn = here.querySelector("#sv-unlock");
   if (unlockBtn) unlockBtn.onclick = () => removeLock(root, lock.id);
+  const drillBtn = here.querySelector("#sv-drill");
+  if (drillBtn) {
+    drillBtn.onclick = () => state.onDrill({
+      live: { only: { history: historyOf(state.path), labels: state.path.map((p) => p.label) }, solution: state.solution },
+    });
+    here.querySelector("#sv-drill-hands").onclick = () => state.onDrill({ live: { only: null, solution: state.solution } });
+  }
   renderDecision(root);
 }
 
