@@ -1,0 +1,89 @@
+{
+ "note": "Three-way pots for the Multiway solver. Players are in postflop order. `opener` is the index of the preflop raiser (null in a limped pot): the bet sizes follow that role when a pot from the preflop solver borrows them. Ranges are plausible 100bb low-stakes cash ranges, without the hands that would have 3-bet.",
+ "spots": [
+  {
+   "id": "co_btn_bb_srp",
+   "name": "CO opens 2.5, BTN and BB call",
+   "pot_type": "srp",
+   "opener": 1,
+   "board": "Ks7d2c",
+   "players": ["BB", "CO", "BTN"],
+   "ranges": [
+    "99-22,AJs-A2s,KJs-K6s,QJs-Q8s,JTs-J8s,T9s-T7s,98s-96s,87s-85s,76s-75s,65s-64s,54s,AJo-ATo,KJo-KTo,QJo-QTo,JTo",
+    "22+,A2s+,K5s+,Q8s+,J8s+,T8s+,97s+,86s+,75s+,65s,54s,ATo+,KJo+,QJo",
+    "JJ-22,AQs-A9s,A5s-A4s,KQs-KTs,QJs-QTs,JTs-J9s,T9s,98s,87s,76s,65s,AQo-AJo,KQo"
+   ],
+   "pot_bb": 8.0,
+   "stack_bb": 97.5,
+   "bets": {
+    "flop": { "bet": ["", "33%", ""], "raise": "3x" },
+    "turn": { "bet": ["66%", "66%", "66%"], "raise": "" },
+    "river": { "bet": ["75%", "75%", "75%"], "raise": "" }
+   },
+   "max_raises": 1
+  },
+  {
+   "id": "btn_sb_bb_srp",
+   "name": "BTN opens 2.5, SB and BB call",
+   "pot_type": "srp",
+   "opener": 2,
+   "board": "Qh8h4c",
+   "players": ["SB", "BB", "BTN"],
+   "ranges": [
+    "TT-22,AJs-A2s,KTs+,QTs+,J9s+,T9s,98s,87s,76s,65s,AQo-AJo,KQo",
+    "99-22,A9s-A2s,K9s-K5s,Q9s-Q7s,J9s-J7s,T9s-T7s,97s+,86s+,75s+,64s+,54s,ATo-A8o,KTo+,QTo+,JTo,T9o",
+    "22+,A2s+,K5s+,Q7s+,J7s+,T7s+,96s+,86s+,75s+,64s+,54s,A7o+,KTo+,QTo+,JTo"
+   ],
+   "pot_bb": 7.5,
+   "stack_bb": 97.5,
+   "bets": {
+    "flop": { "bet": ["", "", "33%"], "raise": "3x" },
+    "turn": { "bet": ["66%", "66%", "66%"], "raise": "" },
+    "river": { "bet": ["75%", "75%", "75%"], "raise": "" }
+   },
+   "max_raises": 1
+  },
+  {
+   "id": "utg_btn_bb_srp",
+   "name": "UTG opens 2.5, BTN and BB call",
+   "pot_type": "srp",
+   "opener": 1,
+   "board": "Ts6d3c",
+   "players": ["BB", "UTG", "BTN"],
+   "ranges": [
+    "TT-22,AQs-A2s,KTs+,QTs+,J9s+,T8s+,97s+,86s+,75s+,65s,54s,AQo-AJo,KJo+",
+    "22+,A2s+,K9s+,Q9s+,J9s+,T9s,98s,87s,76s,AJo+,KQo",
+    "QQ-22,AQs-ATs,A5s-A4s,KQs-KTs,QJs-QTs,JTs,T9s,98s,87s,76s,AQo,KQo"
+   ],
+   "pot_bb": 8.0,
+   "stack_bb": 97.5,
+   "bets": {
+    "flop": { "bet": ["", "33%", ""], "raise": "3x" },
+    "turn": { "bet": ["66%", "66%", "66%"], "raise": "" },
+    "river": { "bet": ["75%", "75%", "75%"], "raise": "" }
+   },
+   "max_raises": 1
+  },
+  {
+   "id": "btn_limp_sb_bb",
+   "name": "BTN limps, SB completes, BB checks",
+   "pot_type": "limp",
+   "opener": null,
+   "board": "9c7h4s",
+   "players": ["SB", "BB", "BTN"],
+   "ranges": [
+    "66-22,A8s-A2s,K9s-K2s,Q9s-Q5s,J9s-J7s,T9s-T7s,97s+,86s+,75s+,64s+,54s,ATo-A2o,KJo-K8o,QTo+,JTo,T9o",
+    "88-22,A9s-A2s,K9s-K2s,Q9s-Q2s,J9s-J5s,T9s-T6s,96s+,85s+,74s+,63s+,53s+,43s,ATo-A2o,KJo-K5o,QJo-Q8o,J8o+,T8o+,98o,87o",
+    "55-22,A7s-A2s,K8s-K4s,Q8s-Q6s,J8s-J7s,T7s+,96s+,85s+,75s,64s,54s,A8o-A2o,K9o-K7o,Q9o,J9o,T9o"
+   ],
+   "pot_bb": 3.0,
+   "stack_bb": 99.0,
+   "bets": {
+    "flop": { "bet": ["50%", "50%", "50%"], "raise": "" },
+    "turn": { "bet": ["66%", "66%", "66%"], "raise": "" },
+    "river": { "bet": ["75%", "75%", "75%"], "raise": "" }
+   },
+   "max_raises": 1
+  }
+ ]
+}

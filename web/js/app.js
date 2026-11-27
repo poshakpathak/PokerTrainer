@@ -1,6 +1,7 @@
 import { initStudy, openInStudy } from "./study.js";
 import { initDrill, openDrill } from "./drill.js";
 import { initRanges } from "./ranges.js";
+import { initMultiway, prefillMultiway } from "./multiway.js";
 import { initReports } from "./reports.js";
 import { initSolver, prefillSolver, openSolverAt } from "./solver.js";
 import { initPreflopSolver, openPreflopAt } from "./pfsolver.js";
@@ -11,6 +12,7 @@ const views = {
   reports: document.getElementById("view-reports"),
   pfsolver: document.getElementById("view-pfsolver"),
   solver: document.getElementById("view-solver"),
+  multiway: document.getElementById("view-multiway"),
   ranges: document.getElementById("view-ranges"),
 };
 const started = {};
@@ -40,6 +42,12 @@ async function openSolver(spot) {
   prefillSolver(views.solver, spot);
 }
 
+/** Opens a three-way pot from the preflop solver in the Multiway solver, ready for a board. */
+async function openMultiway(spot) {
+  await show("multiway");
+  prefillMultiway(views.multiway, spot);
+}
+
 /** Opens a decision of the solve on pt-server in the postflop Solver, from the Drill. */
 async function openSolverNode({ path, solution, cls }) {
   await show("solver");
@@ -63,7 +71,8 @@ function start(name) {
   if (name === "study") return initStudy(views.study);
   if (name === "ranges") return initRanges(views.ranges);
   if (name === "solver") return initSolver(views.solver, { onDrill: drill });
-  if (name === "pfsolver") return initPreflopSolver(views.pfsolver, { onOpenSolver: openSolver, onDrill: drill });
+  if (name === "multiway") return initMultiway(views.multiway);
+  if (name === "pfsolver") return initPreflopSolver(views.pfsolver, { onOpenSolver: openSolver, onOpenMultiway: openMultiway, onDrill: drill });
   if (name === "reports") return initReports(views.reports, { onOpenStudy: openStudy });
   return initDrill(views.drill, { onOpenStudy: openStudy, onOpenSolver: openSolverNode, onOpenPreflop: openPreflop });
 }
