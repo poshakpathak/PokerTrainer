@@ -26,7 +26,9 @@ It has three parts:
      instead of memorizing single boards.
    - **Solver** solves any spot you set up (ranges, board, pot, stacks, bet sizes, rake) on your
      own machine and lets you browse the whole tree: flop, turn and river, on any turn or river
-     card, with a report of the strategy on every card. Needs the local server below.
+     card, with a report of the strategy on every card. You can also **lock** how a player plays
+     at any decision (see [Node locking](#node-locking)) and solve again to find the best
+     exploit, side by side with GTO. Needs the local server below.
    - **Ranges** shows the preflop ranges each spot was solved with.
 
 ## Run it
@@ -53,6 +55,35 @@ python3 -m http.server 8000
 
 Any static file server works (the page fetches `data/*.json`, so opening `index.html`
 directly from disk won't). You can also publish the `web/` folder with GitHub Pages.
+
+## Node locking
+
+Node locking answers "what if my opponent doesn't play GTO here?". You fix how one player plays
+at a decision, solve again, and the solver finds the best way to exploit it. Use it to turn
+reads on real players (overfolds to river bets, never raises the turn, always c-bets) into a
+strategy.
+
+1. Solve a spot in the Solver tab and click through to the decision, e.g. BB facing a river bet.
+2. Click **Lock BB's play here** and set how often BB takes each action, e.g. fold 70%. You
+   pick which hands switch first: the ones that lose the least EV doing so (the default),
+   the weakest, or the strongest. You can also **paint** hands in the grid to fix them to one
+   action, e.g. "always calls with top pair"; the frequencies are then met with the rest of the
+   range. The grid previews the locked strategy as you go.
+3. On the turn or river, tick **On every river card** to lock the same decision on every card
+   that can come, not just the one shown ("BB overfolds rivers" rather than "BB overfolds the
+   2d river").
+4. **Keep BB's earlier decisions on this line as they are now** is on by default. A real player doesn't
+   change their flop and turn play to make up for a river leak, but a solver would, which
+   would also change which hands get to the locked spot. Turn it off to let the solver adjust
+   them.
+5. Save the lock, add more if you like, and click **Solve with this lock**.
+
+The solve with locks is kept next to the GTO solve, so you can switch between **Exploit** and
+**GTO** at any node. The locks panel shows how much EV each player gains or loses over the whole
+hand, every action shows its frequency in the other solution, and the hand detail adds the
+other solution's row for the hovered hand class. Locks belong to the spot and board they were
+made on: solving a different spot clears them, and they're kept in the server's memory, so
+restarting pt-server clears them too. Both solutions have to fit under `--max-memory-gb`.
 
 ## Solve more spots and flops
 
@@ -111,19 +142,28 @@ representative per texture.
 
 | Request | Body | Returns |
 | --- | --- | --- |
-| `POST /api/solve` | `{spot, board, accuracy, max_iters}`; `spot` has the same shape as `spots/*.json` | starts a solve (replacing any current one) |
-| `GET /api/status` | | state, iteration, exploitability, time, memory |
+| `POST /api/solve` | `{spot, board, accuracy, max_iters, locks}`; `spot` has the same shape as `spots/*.json`; `locks: true` applies the saved locks | starts a solve (replacing any current one) |
+| `GET /api/status` | | state, iteration, exploitability, time, memory, the finished solutions and the saved locks |
 | `POST /api/stop` | | stops early and keeps the current strategy |
-| `POST /api/node` | `{history: [...]}` | the node after `history`: a decision (strategy, EV and equity per combo), a chance node (a summary for every card that can come), or terminal |
+| `POST /api/node` | `{history, solution}` | the node after `history`: a decision (strategy, EV and equity per combo, and the same decision in the other solution), a chance node (a summary for every card that can come), or terminal |
+| `POST /api/lock/preview` | `{history, solution, targets, hands, order}` | the strategy per combo a lock would set, and the frequencies before and after |
+| `POST /api/locks/add` | `{history, solution, targets, hands, order, wild, keep_path, label}` | saves a lock (replacing one on the same decision) and returns all locks |
+| `POST /api/locks/remove` | `{id}` | removes a lock |
+| `POST /api/locks/clear` | | removes every lock |
 
 `history` lists action indexes at decision nodes and card ids (0 to 51, `4 * rank + suit` with
-2 = 0 and clubs, diamonds, hearts, spades = 0 to 3) at chance nodes.
+2 = 0 and clubs, diamonds, hearts, spades = 0 to 3) at chance nodes. `solution` is `"gto"` or
+`"exploit"` (the last solve without or with locks); it defaults to the latest.
+
+A lock's `targets` are the range-wide action frequencies, one per action; `order` is which
+hands change first to reach them: `"ev"` (least EV lost, the default), `"weak"` or `"strong"`
+(by equity). `hands` fixes hand classes or combos to a mix, e.g. `{"AKs": [0, 1], "QhJh": [1, 0]}`.
+`wild` lists the steps of `history` that are cards to treat as any card, and `keep_path`
+also locks the same player's earlier decisions on the line as they are.
 
 ## Roadmap
 
 - Preflop solver, so the ranges going into each spot come from a solve instead of charts.
-- Node locking: set a strategy for one player (e.g. "never bluffs the river") and re-solve to
-  see the best exploit.
 - Aggregated turn and river reports across many flops.
 - Multiway pots.
 
